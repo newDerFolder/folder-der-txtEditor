@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://ccctwko22qa63" path="res://page/main.gd" id="1_7vvka"]
 [ext_resource type="Theme" uid="uid://b5gghdljmhsw3" path="res://resource/folder.tres" id="1_jhugg"]
 [ext_resource type="Texture2D" uid="uid://6ct5w444elpj" path="res://asset/bg/tsBg.png" id="2_cee7s"]
+[ext_resource type="CodeHighlighter" uid="uid://bqsy83r5bx28m" path="res://resource/new_code_highlighter.tres" id="4_pmkfb"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
 script/source = "extends Button
@@ -53,43 +54,35 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="PanelContainer" type="PanelContainer" parent="VBC" unique_id=1872206963]
+[node name="PC" type="PanelContainer" parent="VBC" unique_id=1872206963]
 layout_mode = 2
 
-[node name="HBC" type="HBoxContainer" parent="VBC/PanelContainer" unique_id=627105375]
+[node name="HBC" type="HBoxContainer" parent="VBC/PC" unique_id=627105375]
 layout_mode = 2
 
-[node name="SaveButton" type="Button" parent="VBC/PanelContainer/HBC" unique_id=1293850510]
+[node name="SaveButton" type="Button" parent="VBC/PC/HBC" unique_id=1293850510]
 layout_mode = 2
 text = "Save"
 
-[node name="SettingButton" type="Button" parent="VBC/PanelContainer/HBC" unique_id=291950684]
+[node name="SettingButton" type="Button" parent="VBC/PC/HBC" unique_id=291950684]
 visible = false
 layout_mode = 2
 text = "Setting"
 script = SubResource("GDScript_cee7s")
 
-[node name="Label" type="Label" parent="VBC/PanelContainer/HBC" unique_id=171517441]
+[node name="Label" type="Label" parent="VBC/PC/HBC" unique_id=171517441]
 layout_mode = 2
 text = "v0.1"
 
-[node name="Control2" type="Control" parent="VBC/PanelContainer/HBC" unique_id=699988984]
+[node name="Control2" type="Control" parent="VBC/PC/HBC" unique_id=699988984]
 custom_minimum_size = Vector2(50, 0)
 layout_mode = 2
 
-[node name="Label2" type="Label" parent="VBC/PanelContainer/HBC" unique_id=187733132]
-layout_mode = 2
-text = "character:"
-
-[node name="Label3" type="Label" parent="VBC/PanelContainer/HBC" unique_id=419120695]
-layout_mode = 2
-text = "0"
-
-[node name="Control" type="Control" parent="VBC/PanelContainer/HBC" unique_id=576815010]
+[node name="Control" type="Control" parent="VBC/PC/HBC" unique_id=576815010]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="Label4" type="Label" parent="VBC/PanelContainer/HBC" unique_id=320973979]
+[node name="Label4" type="Label" parent="VBC/PC/HBC" unique_id=320973979]
 layout_mode = 2
 text = "no file"
 
@@ -101,10 +94,40 @@ size_flags_vertical = 3
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+syntax_highlighter = ExtResource("4_pmkfb")
 highlight_all_occurrences = true
 highlight_current_line = true
 draw_control_chars = true
 draw_tabs = true
 draw_spaces = true
 
-[connection signal="pressed" from="VBC/PanelContainer/HBC/SaveButton" to="." method="_on_save_button_pressed"]
+[node name="PC2" type="PanelContainer" parent="VBC" unique_id=181409538]
+layout_mode = 2
+
+[node name="HBC" type="HBoxContainer" parent="VBC/PC2" unique_id=408987562]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="VBC/PC2/HBC" unique_id=505233030]
+layout_mode = 2
+text = "character:"
+
+[node name="Label3" type="Label" parent="VBC/PC2/HBC" unique_id=473135853]
+layout_mode = 2
+text = "0"
+
+[node name="Control" type="Control" parent="VBC/PC2/HBC" unique_id=1625649702]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Label5" type="Label" parent="VBC/PC2/HBC" unique_id=1907737374]
+layout_mode = 2
+text = "快速保存(Ctrl+S)"
+
+[node name="VSeparator" type="VSeparator" parent="VBC/PC2/HBC" unique_id=1822470637]
+layout_mode = 2
+
+[node name="Label4" type="Label" parent="VBC/PC2/HBC" unique_id=1925998415]
+layout_mode = 2
+text = "专注模式(F11)"
+
+[connection signal="pressed" from="VBC/PC/HBC/SaveButton" to="." method="_on_save_button_pressed"]

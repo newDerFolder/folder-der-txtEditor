@@ -10,9 +10,10 @@ config_version=5
 
 [application]
 
-config/name="FolderDerTxtEditor"
+config/name="FolderDerTextEditor"
 run/main_scene="uid://drn64b5pav01m"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+run/max_fps=144
 boot_splash/image="uid://du527uh7ok7d1"
 config/icon="uid://dwq48bi8qdqaf"
 

@@ -1,0 +1,14 @@
+[gd_resource type="CodeHighlighter" format=3 uid="uid://bqsy83r5bx28m"]
+
+[resource]
+number_color = Color(0, 1, 0, 1)
+symbol_color = Color(0, 1, 1, 1)
+function_color = Color(0, 0.74509805, 1, 1)
+member_variable_color = Color(0.59607846, 0, 0.31764707, 1)
+keyword_colors = {
+"for": Color(1, 0, 1, 1),
+"if": Color(1, 0, 1, 1)
+}
+color_regions = {
+"\"": Color(1, 1, 0, 1)
+}
