@@ -1,0 +1,66 @@
+[gd_scene format=3 uid="uid://drn64b5pav01m"]
+
+[ext_resource type="Script" uid="uid://ccctwko22qa63" path="res://page/main.gd" id="1_7vvka"]
+
+[sub_resource type="GDScript" id="GDScript_cee7s"]
+script/source = "extends Button
+
+
+func _pressed() -> void:
+	var win=load(\"res://scene/SettingWin.tscn\").instantiate()
+	add_child(win)
+"
+
+[node name="Main" type="Control" unique_id=1910877943]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_7vvka")
+
+[node name="TextureRect" type="TextureRect" parent="." unique_id=1725611111]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 3
+
+[node name="VBC" type="VBoxContainer" parent="." unique_id=1157994098]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="HBC" type="HBoxContainer" parent="VBC" unique_id=627105375]
+layout_mode = 2
+
+[node name="SaveButton" type="Button" parent="VBC/HBC" unique_id=1293850510]
+layout_mode = 2
+text = "Save"
+
+[node name="SettingButton" type="Button" parent="VBC/HBC" unique_id=291950684]
+visible = false
+layout_mode = 2
+text = "Setting"
+script = SubResource("GDScript_cee7s")
+
+[node name="Label" type="Label" parent="VBC/HBC" unique_id=171517441]
+layout_mode = 2
+text = "v0.1"
+
+[node name="SC" type="ScrollContainer" parent="VBC" unique_id=1534484378]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="TextEdit" type="TextEdit" parent="VBC/SC" unique_id=1640316979]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[connection signal="pressed" from="VBC/HBC/SaveButton" to="." method="_on_save_button_pressed"]

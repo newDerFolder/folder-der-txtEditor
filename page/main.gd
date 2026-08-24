@@ -1,0 +1,38 @@
+extends Control
+
+var current_file_path: String = ""
+@onready var text_edit = $VBC/SC/TextEdit   # 确定你场景里正确的路径
+
+func _ready():
+	var args = OS.get_cmdline_args()
+	for a in args:
+		if a.ends_with(".txt"):
+			current_file_path = a
+			open_and_show(a)
+	text_edit.grab_focus()
+
+func open_and_show(path: String):
+	var f = FileAccess.open(path, FileAccess.READ)
+	if f:
+		text_edit.text = f.get_as_text()
+
+func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_save") or \
+	   (event is InputEventKey and event.keycode == KEY_S and event.pressed and \
+		(Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META))):
+		save_file()
+		get_viewport().set_input_as_handled()
+
+func _on_save_button_pressed() -> void:
+	save_file()
+
+func save_file():
+	if current_file_path == "":
+		OS.alert("没有打开任何文件")
+		return
+
+	var f = FileAccess.open(current_file_path, FileAccess.WRITE)
+	if f:
+		f.store_string(text_edit.text)   # 统一使用 text_edit
+	else:
+		OS.alert("保存失败：" + str(FileAccess.get_open_error()))

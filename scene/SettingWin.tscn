@@ -1,0 +1,92 @@
+[gd_scene format=3 uid="uid://behc6qg3h7v0w"]
+
+[sub_resource type="GDScript" id="GDScript_nxrl4"]
+script/source = "extends Window
+"
+
+[node name="SettingWin" type="Window" unique_id=1566204704]
+oversampling_override = 1.0
+title = "Setting"
+initial_position = 2
+size = Vector2i(820, 458)
+script = SubResource("GDScript_nxrl4")
+
+[node name="C" type="Control" parent="." unique_id=1425039011]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBC" type="VBoxContainer" parent="C" unique_id=424076469]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SC" type="ScrollContainer" parent="C/VBC" unique_id=390040829]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VBC" type="VBoxContainer" parent="C/VBC/SC" unique_id=1010084014]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Font" type="FoldableContainer" parent="C/VBC/SC/VBC" unique_id=149783132]
+layout_mode = 2
+title = "Font"
+
+[node name="VBoxContainer" type="VBoxContainer" parent="C/VBC/SC/VBC/Font" unique_id=107579376]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="C/VBC/SC/VBC/Font/VBoxContainer" unique_id=1651968161]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="C/VBC/SC/VBC/Font/VBoxContainer/HBoxContainer" unique_id=1957924315]
+layout_mode = 2
+text = "Font Size"
+
+[node name="SpinBox" type="SpinBox" parent="C/VBC/SC/VBC/Font/VBoxContainer/HBoxContainer" unique_id=2059877501]
+layout_mode = 2
+value = 25.0
+
+[node name="Background" type="FoldableContainer" parent="C/VBC/SC/VBC" unique_id=1385918134]
+layout_mode = 2
+title = "Font"
+
+[node name="VBoxContainer" type="VBoxContainer" parent="C/VBC/SC/VBC/Background" unique_id=1156433912]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="C/VBC/SC/VBC/Background/VBoxContainer" unique_id=1121894022]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="C/VBC/SC/VBC/Background/VBoxContainer/HBoxContainer" unique_id=476290968]
+layout_mode = 2
+text = "photo path"
+
+[node name="LineEdit" type="LineEdit" parent="C/VBC/SC/VBC/Background/VBoxContainer/HBoxContainer" unique_id=921370249]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Label2" type="Label" parent="C/VBC/SC/VBC/Background/VBoxContainer" unique_id=84525626]
+custom_minimum_size = Vector2(10, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"TooltipLabel"
+text = "(\"Please place the file in C:\\Users\\Admin\\AppData\\Roaming\\Godot\\app_userdata\\FolderDerTxtEditor, and rename the image to bg.\")"
+autowrap_mode = 2
+
+[node name="HBC" type="HBoxContainer" parent="C/VBC" unique_id=239606358]
+layout_mode = 2
+
+[node name="Button2" type="Button" parent="C/VBC/HBC" unique_id=2021793626]
+layout_mode = 2
+text = "Cancel"
+
+[node name="SaveButton" type="Button" parent="C/VBC/HBC" unique_id=1943108014]
+layout_mode = 2
+text = "Save"
