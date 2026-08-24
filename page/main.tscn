@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://ccctwko22qa63" path="res://page/main.gd" id="1_7vvka"]
 [ext_resource type="Theme" uid="uid://b5gghdljmhsw3" path="res://resource/folder.tres" id="1_jhugg"]
-[ext_resource type="Texture2D" uid="uid://6ct5w444elpj" path="res://asset/bg/tsBg.png" id="2_cee7s"]
+[ext_resource type="Texture2D" uid="uid://d2alvwpkakrpv" path="res://asset/bg/tsBgHF.png" id="3_pmkfb"]
 [ext_resource type="CodeHighlighter" uid="uid://bqsy83r5bx28m" path="res://resource/new_code_highlighter.tres" id="4_pmkfb"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
@@ -35,7 +35,6 @@ grow_vertical = 2
 color = Color(1, 1, 0.7411765, 1)
 
 [node name="TextureRect" type="TextureRect" parent="." unique_id=1725611111]
-visible = false
 modulate = Color(1, 1, 1, 0.39215687)
 layout_mode = 1
 anchors_preset = 15
@@ -43,7 +42,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-texture = ExtResource("2_cee7s")
+texture = ExtResource("3_pmkfb")
 expand_mode = 3
 
 [node name="VBC" type="VBoxContainer" parent="." unique_id=1157994098]
@@ -64,11 +63,19 @@ layout_mode = 2
 layout_mode = 2
 text = "Save"
 
+[node name="SaveAsButton" type="Button" parent="VBC/PC/HBC" unique_id=1255082483]
+layout_mode = 2
+text = "Save As"
+
 [node name="SettingButton" type="Button" parent="VBC/PC/HBC" unique_id=291950684]
 visible = false
 layout_mode = 2
 text = "Setting"
 script = SubResource("GDScript_cee7s")
+
+[node name="Open" type="Button" parent="VBC/PC/HBC" unique_id=363884049]
+layout_mode = 2
+text = "Open"
 
 [node name="Label" type="Label" parent="VBC/PC/HBC" unique_id=171517441]
 layout_mode = 2
@@ -119,6 +126,13 @@ text = "0"
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="Label6" type="Label" parent="VBC/PC2/HBC" unique_id=342702923]
+layout_mode = 2
+text = "缩放大小(Alt - +)"
+
+[node name="VSeparator2" type="VSeparator" parent="VBC/PC2/HBC" unique_id=1177140512]
+layout_mode = 2
+
 [node name="Label5" type="Label" parent="VBC/PC2/HBC" unique_id=1907737374]
 layout_mode = 2
 text = "快速保存(Ctrl+S)"
@@ -130,4 +144,16 @@ layout_mode = 2
 layout_mode = 2
 text = "专注模式(F11)"
 
+[node name="FileDialogSave" type="FileDialog" parent="." unique_id=179431967]
+access = 2
+filters = PackedStringArray("*.txt")
+
+[node name="FileDialogOpen" type="FileDialog" parent="." unique_id=1189286666]
+title = "Open a File"
+file_mode = 0
+access = 2
+filters = PackedStringArray("*.txt")
+
 [connection signal="pressed" from="VBC/PC/HBC/SaveButton" to="." method="_on_save_button_pressed"]
+[connection signal="pressed" from="VBC/PC/HBC/SaveAsButton" to="." method="_on_save_as_button_pressed"]
+[connection signal="pressed" from="VBC/PC/HBC/Open" to="." method="_on_open_pressed"]
