@@ -3,18 +3,25 @@ extends Control
 var current_file_path: String = ""
 @onready var text_edit = $VBC/SC/TextEdit   # 确定你场景里正确的路径
 
+
+
 func _ready():
 	var args = OS.get_cmdline_args()
 	for a in args:
 		if a.ends_with(".txt"):
 			current_file_path = a
+			$VBC/PanelContainer/HBC/Label4.text=current_file_path
 			open_and_show(a)
 	text_edit.grab_focus()
+
+func _process(delta: float) -> void:
+	$VBC/PanelContainer/HBC/Label3.text=str(text_edit.text.length())
 
 func open_and_show(path: String):
 	var f = FileAccess.open(path, FileAccess.READ)
 	if f:
 		text_edit.text = f.get_as_text()
+		
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_save") or \
@@ -22,6 +29,8 @@ func _input(event: InputEvent) -> void:
 		(Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META))):
 		save_file()
 		get_viewport().set_input_as_handled()
+	if event.is_action_pressed("f11"):
+		$VBC/PanelContainer.visible=not $VBC/PanelContainer.visible
 
 func _on_save_button_pressed() -> void:
 	save_file()
