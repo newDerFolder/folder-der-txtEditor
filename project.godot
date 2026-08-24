@@ -21,6 +21,7 @@ config/icon="uid://dwq48bi8qdqaf"
 
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation=1
 
 [input]
 
@@ -52,3 +53,4 @@ common/max_physics_steps_per_frame=1
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true

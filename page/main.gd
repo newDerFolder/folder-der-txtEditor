@@ -10,7 +10,7 @@ func _ready():
 	for a in args:
 		#if a.ends_with(".txt") or a.ends_with(".csv") or a.ends_with(".json"):
 		current_file_path = a
-		$VBC/PC2/HBC/Label4.text=current_file_path
+		$VBC/PC/HBC/Label4.text=current_file_path
 		open_and_show(a)
 	text_edit.grab_focus()
 
