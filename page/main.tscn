@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://drn64b5pav01m"]
 
 [ext_resource type="Script" uid="uid://ccctwko22qa63" path="res://page/main.gd" id="1_7vvka"]
+[ext_resource type="Texture2D" uid="uid://6ct5w444elpj" path="res://asset/bg/tsBg.png" id="2_cee7s"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
 script/source = "extends Button
@@ -21,12 +22,15 @@ grow_vertical = 2
 script = ExtResource("1_7vvka")
 
 [node name="TextureRect" type="TextureRect" parent="." unique_id=1725611111]
+visible = false
+modulate = Color(1, 1, 1, 0.39215687)
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+texture = ExtResource("2_cee7s")
 expand_mode = 3
 
 [node name="VBC" type="VBoxContainer" parent="." unique_id=1157994098]
