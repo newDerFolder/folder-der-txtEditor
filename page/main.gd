@@ -35,6 +35,18 @@ func _input(event: InputEvent) -> void:
 		(Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META))):
 		save_file()
 		get_viewport().set_input_as_handled()
+	# 新增：快速另存为 Ctrl+Shift+S
+	if event is InputEventKey and event.keycode == KEY_S and event.pressed and \
+	   (Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META)) and \
+	   Input.is_key_pressed(KEY_SHIFT):
+		_on_save_as_button_pressed()
+		get_viewport().set_input_as_handled()
+		
+	# 新增：快速打开 Ctrl+O
+	if event is InputEventKey and event.keycode == KEY_O and event.pressed and \
+	   (Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META)):
+		_on_open_pressed()
+		get_viewport().set_input_as_handled()
 		
 	if event.is_action_pressed("f11"):
 		$VBC/PC.visible = not $VBC/PC.visible
@@ -48,7 +60,8 @@ func _input(event: InputEvent) -> void:
 		if font_size<100:
 			font_size+=1
 		$VBC/SC/TextEdit.add_theme_font_size_override("font_size",font_size)
-
+	if Input.is_action_just_pressed("map"):
+		$VBC/SC/TextEdit.minimap_draw=not $VBC/SC/TextEdit.minimap_draw
 func _on_save_button_pressed() -> void:
 	save_file()
 

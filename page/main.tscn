@@ -35,7 +35,7 @@ grow_vertical = 2
 color = Color(1, 1, 0.7411765, 1)
 
 [node name="TextureRect" type="TextureRect" parent="." unique_id=1725611111]
-modulate = Color(1, 1, 1, 0.39215687)
+modulate = Color(1, 1, 1, 0.6862745)
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -101,6 +101,8 @@ size_flags_vertical = 3
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+wrap_mode = 1
+minimap_draw = true
 syntax_highlighter = ExtResource("4_pmkfb")
 highlight_all_occurrences = true
 highlight_current_line = true
@@ -126,9 +128,16 @@ text = "0"
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="Label7" type="Label" parent="VBC/PC2/HBC" unique_id=416568091]
+layout_mode = 2
+text = "小地图(Ctrl+M)"
+
+[node name="VSeparator3" type="VSeparator" parent="VBC/PC2/HBC" unique_id=623379790]
+layout_mode = 2
+
 [node name="Label6" type="Label" parent="VBC/PC2/HBC" unique_id=342702923]
 layout_mode = 2
-text = "缩放大小(Alt - +)"
+text = "缩放大小(Ctrl - +)"
 
 [node name="VSeparator2" type="VSeparator" parent="VBC/PC2/HBC" unique_id=1177140512]
 layout_mode = 2
@@ -146,13 +155,15 @@ text = "专注模式(F11)"
 
 [node name="FileDialogSave" type="FileDialog" parent="." unique_id=179431967]
 access = 2
-filters = PackedStringArray("*.txt")
+filters = PackedStringArray("*.txt", "*.json", "*.csv")
+use_native_dialog = true
 
 [node name="FileDialogOpen" type="FileDialog" parent="." unique_id=1189286666]
 title = "Open a File"
 file_mode = 0
 access = 2
-filters = PackedStringArray("*.txt")
+filters = PackedStringArray("*.txt", "*.json", "*.csv")
+use_native_dialog = true
 
 [connection signal="pressed" from="VBC/PC/HBC/SaveButton" to="." method="_on_save_button_pressed"]
 [connection signal="pressed" from="VBC/PC/HBC/SaveAsButton" to="." method="_on_save_as_button_pressed"]
