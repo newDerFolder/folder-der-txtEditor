@@ -17,10 +17,18 @@ run/max_fps=144
 boot_splash/image="uid://du527uh7ok7d1"
 config/icon="uid://dwq48bi8qdqaf"
 
+[autoload]
+
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
+
 [display]
 
 window/stretch/aspect="expand"
 window/handheld/orientation=1
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
 
 [input]
 
