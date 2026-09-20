@@ -1,0 +1,70 @@
+[gd_scene format=3 uid="uid://m6fhf3q4028t"]
+
+[ext_resource type="Script" uid="uid://v74j0l6i0paa" path="res://addons/der_framework/DUi/ShortenNode/Control/VBC.gd" id="1_drxru"]
+[ext_resource type="Script" uid="uid://b7qscq476iy15" path="res://addons/der_framework/DUi/ShortenNode/Control/SC.gd" id="2_c525t"]
+[ext_resource type="Script" uid="uid://nh05fmboea02" path="res://addons/der_framework/DUi/ShortenNode/Control/HBC.gd" id="2_rcyhi"]
+[ext_resource type="Script" uid="uid://2djiqj42ij4" path="res://addons/der_framework/DSettings/scene/control/language_item_button.gd" id="3_to7su"]
+
+[node name="Language" type="VBoxContainer" unique_id=1718675501]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_drxru")
+metadata/_custom_type_script = "uid://v74j0l6i0paa"
+
+[node name="PanelContainer" type="PanelContainer" parent="." unique_id=1067399169]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PanelContainer" unique_id=499010167]
+layout_mode = 2
+theme_type_variation = &"HeaderLarge"
+text = "Language"
+
+[node name="HBC" type="HBoxContainer" parent="." unique_id=1108319428]
+layout_mode = 2
+script = ExtResource("2_rcyhi")
+metadata/_custom_type_script = "uid://nh05fmboea02"
+
+[node name="Label" type="Label" parent="HBC" unique_id=1463231695]
+layout_mode = 2
+text = "Task Text:"
+
+[node name="Label2" type="Label" parent="HBC" unique_id=1619366353]
+layout_mode = 2
+text = "开始游戏"
+
+[node name="SC" type="ScrollContainer" parent="." unique_id=1785921273]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("2_c525t")
+metadata/_custom_type_script = "uid://b7qscq476iy15"
+
+[node name="VBC" type="VBoxContainer" parent="SC" unique_id=1902182256]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("1_drxru")
+metadata/_custom_type_script = "uid://v74j0l6i0paa"
+
+[node name="LanguageItemButton" type="Button" parent="SC/VBC" unique_id=1711307626]
+layout_mode = 2
+text = "English"
+script = ExtResource("3_to7su")
+language_id = "EN"
+metadata/_custom_type_script = "uid://2djiqj42ij4"
+
+[node name="LanguageItemButton2" type="Button" parent="SC/VBC" unique_id=1395870242]
+layout_mode = 2
+text = "Chinese"
+script = ExtResource("3_to7su")
+language_id = "CN"
+metadata/_custom_type_script = "uid://2djiqj42ij4"
+
+[node name="LanguageItemButton3" type="Button" parent="SC/VBC" unique_id=1838290024]
+layout_mode = 2
+text = "Japanese"
+script = ExtResource("3_to7su")
+language_id = "JP"
+metadata/_custom_type_script = "uid://2djiqj42ij4"

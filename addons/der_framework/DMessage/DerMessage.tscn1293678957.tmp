@@ -1,0 +1,71 @@
+[gd_scene format=3 uid="uid://dbcvkwaksbnwa"]
+
+[ext_resource type="Script" uid="uid://dxenq7hguejk5" path="res://addons/der_framework/DMessage/der_message.gd" id="1_ly01y"]
+
+[node name="DerMessage" type="CanvasLayer" unique_id=1372707393]
+script = ExtResource("1_ly01y")
+
+[node name="C" type="Control" parent="." unique_id=1976061103]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBC" type="VBoxContainer" parent="C" unique_id=319137021]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="C" type="CenterContainer" parent="C/VBC" unique_id=742601251]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBC" type="HBoxContainer" parent="C/VBC" unique_id=867666652]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 4.0
+
+[node name="PC" type="PanelContainer" parent="C/VBC/HBC" unique_id=2114302259]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SC" type="ScrollContainer" parent="C/VBC/HBC/PC" unique_id=2134052353]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="VBC" type="VBoxContainer" parent="C/VBC/HBC/PC/SC" unique_id=1764866879]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="C4" type="Control" parent="C/VBC/HBC" unique_id=1987018094]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="C2" type="Control" parent="C/VBC/HBC" unique_id=250051037]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="C5" type="Control" parent="C/VBC/HBC" unique_id=1635365593]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SC" type="ScrollContainer" parent="C/VBC/HBC" unique_id=194803183]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="VBC" type="VBoxContainer" parent="C/VBC/HBC/SC" unique_id=194191957]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="C2" type="Control" parent="C/VBC" unique_id=813507378]
+layout_mode = 2
+size_flags_vertical = 3

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://culhhtaewoyjd"]
+
+[ext_resource type="Script" uid="uid://2djiqj42ij4" path="res://addons/der_framework/DSettings/scene/control/language_item_button.gd" id="1_4befi"]
+
+[node name="LanguageItemButton" type="Button" unique_id=1611513535]
+script = ExtResource("1_4befi")

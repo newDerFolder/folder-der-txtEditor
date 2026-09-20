@@ -1,0 +1,174 @@
+[gd_scene format=3 uid="uid://fdkky8nyms46"]
+
+[ext_resource type="Texture2D" uid="uid://lx04qfdu4ie3" path="res://addons/der_framework/asset/bg/funcRangeStudioLogo.jpg" id="1_xd3jb"]
+
+[sub_resource type="GDScript" id="GDScript_xd3jb"]
+script/source = "extends PanelContainer
+
+@export var res:DerSaveRes
+
+
+func _ready() -> void:
+	if res==null:
+		push_error(\"DerSaveSlotNode的Res为null,你必须得为该槽位配置一个资源文件才能正常使用\")
+		return
+	refresh()
+
+func refresh():
+	$HBC/VBC/Label.text = res.save_name
+	$HBC/VBC/HBC/Label3.text = res.get_create_time_str()
+	$HBC/VBC/HBC2/Label3.text = res.get_last_modified_str()
+	
+	# 处理 playtime（分钟）的友好显示
+	var minutes = res.playtime
+	if minutes >= 60:
+		var hours = minutes / 60
+		var remaining_minutes = minutes % 60
+		$HBC/VBC/HBC3/Label3.text = str(hours) + \"h\" + str(remaining_minutes) + \"min\"
+	else:
+		$HBC/VBC/HBC3/Label3.text = str(minutes) + \"min\"
+
+
+func _on_save_button_pressed() -> void:
+	if res==null:
+		push_error(\"DerSaveSlotNode的Res为null,你必须得为该槽位配置一个资源文件才能正常使用\")
+		return
+	DSaveManager.save_resource(res)
+
+
+func _on_load_button_pressed() -> void:
+	if res==null:
+		push_error(\"DerSaveSlotNode的Res为null,你必须得为该槽位配置一个资源文件才能正常使用\")
+		return
+	DSaveManager.set_cur_res(res)
+
+
+func _on_remove_button_pressed() -> void:
+	if res == null:
+		push_error(\"DerSaveSlotNode的Res为null,你必须得为该槽位配置一个资源文件才能正常使用\")
+		return
+	
+	# 创建确认对话框
+	var dialog := AcceptDialog.new()
+	dialog.dialog_text = \"确定要删除存档【%s】吗？此操作不可恢复。\" % res.save_name
+	#dialog.ok_button_text = \"确认删除\"
+	#dialog.cancel_button_text = \"取消\"
+	#dialog.confirm_cancel = true  # 显示取消按钮
+	dialog.title = \"删除确认\"
+	
+	# 连接确认信号
+	dialog.confirmed.connect(_on_delete_confirmed.bind(dialog))
+	
+	# 添加到场景并显示
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _on_delete_confirmed(dialog: AcceptDialog) -> void:
+	# 执行删除逻辑
+	DSaveManager.delete_resource(res)
+	
+	# 可选：刷新 UI 或移除自身
+	queue_free()
+	
+	# 清理对话框
+	if is_instance_valid(dialog):
+		dialog.queue_free()
+"
+
+[node name="SaveSlotNode" type="PanelContainer" unique_id=1144743982]
+custom_minimum_size = Vector2(600, 100)
+size_flags_horizontal = 3
+script = SubResource("GDScript_xd3jb")
+
+[node name="HBC" type="HBoxContainer" parent="." unique_id=1368488941]
+layout_mode = 2
+
+[node name="TextureRect" type="TextureRect" parent="HBC" unique_id=546501198]
+custom_minimum_size = Vector2(150, 100)
+layout_mode = 2
+texture = ExtResource("1_xd3jb")
+expand_mode = 3
+
+[node name="VBC" type="VBoxContainer" parent="HBC" unique_id=1396294156]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Label" type="Label" parent="HBC/VBC" unique_id=1001547911]
+layout_mode = 2
+theme_type_variation = &"HeaderLarge"
+text = "SaveSlot1"
+
+[node name="HBC" type="HBoxContainer" parent="HBC/VBC" unique_id=1055669127]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="HBC/VBC/HBC" unique_id=914991771]
+layout_mode = 2
+text = "crater time:"
+
+[node name="Label3" type="Label" parent="HBC/VBC/HBC" unique_id=924342093]
+layout_mode = 2
+text = "1145-10-19-11:45"
+
+[node name="HBC2" type="HBoxContainer" parent="HBC/VBC" unique_id=425614685]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="HBC/VBC/HBC2" unique_id=211863381]
+layout_mode = 2
+text = "update time:"
+
+[node name="Label3" type="Label" parent="HBC/VBC/HBC2" unique_id=533082994]
+layout_mode = 2
+text = "1145-10-19-11:45"
+
+[node name="HBC3" type="HBoxContainer" parent="HBC/VBC" unique_id=1663518910]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="HBC/VBC/HBC3" unique_id=1492831681]
+layout_mode = 2
+text = "play time:"
+
+[node name="Label3" type="Label" parent="HBC/VBC/HBC3" unique_id=2133866658]
+layout_mode = 2
+text = "1h2 min"
+
+[node name="MarginContainer" type="MarginContainer" parent="HBC" unique_id=585093162]
+layout_mode = 2
+theme_override_constants/margin_left = 25
+theme_override_constants/margin_top = 25
+theme_override_constants/margin_right = 25
+theme_override_constants/margin_bottom = 25
+
+[node name="VBoxContainer2" type="GridContainer" parent="HBC/MarginContainer" unique_id=1111661208]
+layout_mode = 2
+columns = 2
+
+[node name="Button5" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=664815457]
+visible = false
+layout_mode = 2
+text = "Pinned"
+
+[node name="Button4" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=884958906]
+visible = false
+layout_mode = 2
+text = "Copy"
+
+[node name="SaveButton" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=1490531829]
+layout_mode = 2
+text = "Save"
+
+[node name="LoadButton" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=890388243]
+layout_mode = 2
+text = "Load"
+
+[node name="Button6" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=1322757960]
+visible = false
+layout_mode = 2
+text = "Rename"
+
+[node name="RemoveButton" type="Button" parent="HBC/MarginContainer/VBoxContainer2" unique_id=1578200937]
+layout_mode = 2
+text = "Remove"
+
+[connection signal="pressed" from="HBC/MarginContainer/VBoxContainer2/SaveButton" to="." method="_on_save_button_pressed"]
+[connection signal="pressed" from="HBC/MarginContainer/VBoxContainer2/LoadButton" to="." method="_on_load_button_pressed"]
+[connection signal="pressed" from="HBC/MarginContainer/VBoxContainer2/RemoveButton" to="." method="_on_remove_button_pressed"]

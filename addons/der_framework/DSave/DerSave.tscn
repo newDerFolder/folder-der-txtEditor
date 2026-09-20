@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bfpoeg5fusesr"]
+
+[ext_resource type="Script" uid="uid://c6ynui5q7dtmh" path="res://addons/der_framework/DSave/der_save.gd" id="1_4fa38"]
+
+[node name="DerSave" type="Node" unique_id=1678666528]
+script = ExtResource("1_4fa38")

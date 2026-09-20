@@ -1,0 +1,125 @@
+[gd_scene format=3 uid="uid://ijtexw25nkr2"]
+
+[ext_resource type="Texture2D" uid="uid://c52hdr4elk8yl" path="res://addons/der_framework/asset/icon/redClose.png" id="1_dat3v"]
+[ext_resource type="Script" uid="uid://db4w6dvgrlp1" path="res://addons/der_framework/DUi/script/CloseButton.gd" id="1_xjsf8"]
+
+[sub_resource type="GDScript" id="GDScript_dat3v"]
+script/source = "extends Control
+
+
+func _ready() -> void:
+	refresh()
+
+
+func refresh():
+	for i in $VBC/TC/Slot/SC/GC.get_children():
+		i.queue_free()
+	
+	for i in DSaveManager.list_saves():
+		var save=DSaveManager.load_resource(i)
+		var node=preload(\"res://addons/der_framework/DSave/scene/SaveSlotNode.tscn\").instantiate()
+		node.res=save
+		$VBC/TC/Slot/SC/GC.add_child(node)
+"
+
+[sub_resource type="GDScript" id="GDScript_2fs81"]
+script/source = "extends Button
+func _pressed() -> void:
+	var win=preload(\"res://addons/der_framework/DSave/scene/CreateNewSaveWin.tscn\").instantiate()
+	win.changed.connect($\"../../../../../..\".refresh)
+	
+	$\"../../../../../..\".add_child(win)
+"
+
+[node name="DerSaveUi" type="Control" unique_id=2018295137]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = SubResource("GDScript_dat3v")
+
+[node name="ColorRect" type="ColorRect" parent="." unique_id=28140584]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.39232534, 0.3923254, 0.39232522, 1)
+
+[node name="VBC" type="VBoxContainer" parent="." unique_id=741454600]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PanelContainer" type="PanelContainer" parent="VBC" unique_id=1899575675]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBC/PanelContainer" unique_id=47988057]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBC/PanelContainer/HBoxContainer" unique_id=197074397]
+layout_mode = 2
+theme_type_variation = &"HeaderLarge"
+text = "SaveManager"
+
+[node name="Label2" type="Label" parent="VBC/PanelContainer/HBoxContainer" unique_id=790574017]
+layout_mode = 2
+text = "FuncRangeStudio"
+
+[node name="Control" type="Control" parent="VBC/PanelContainer/HBoxContainer" unique_id=1836441774]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CloseButton" type="Button" parent="VBC/PanelContainer/HBoxContainer" unique_id=1371331442 node_paths=PackedStringArray("page")]
+custom_minimum_size = Vector2(50, 50)
+layout_mode = 2
+icon = ExtResource("1_dat3v")
+expand_icon = true
+script = ExtResource("1_xjsf8")
+page = NodePath("../../../..")
+metadata/_custom_type_script = "uid://db4w6dvgrlp1"
+
+[node name="TC" type="TabContainer" parent="VBC" unique_id=835692103]
+layout_mode = 2
+size_flags_vertical = 3
+current_tab = 0
+
+[node name="Slot" type="VBoxContainer" parent="VBC/TC" unique_id=1145254493]
+layout_mode = 2
+metadata/_tab_index = 0
+
+[node name="MC" type="MarginContainer" parent="VBC/TC/Slot" unique_id=1066513790]
+layout_mode = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 15
+
+[node name="HBC" type="HBoxContainer" parent="VBC/TC/Slot/MC" unique_id=1802879649]
+layout_mode = 2
+
+[node name="Button" type="Button" parent="VBC/TC/Slot/MC/HBC" unique_id=15966358]
+layout_mode = 2
+text = "Create New Save"
+script = SubResource("GDScript_2fs81")
+
+[node name="SC" type="ScrollContainer" parent="VBC/TC/Slot" unique_id=1873637544]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="GC" type="GridContainer" parent="VBC/TC/Slot/SC" unique_id=928105468]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+columns = 2
+
+[node name="Setting" type="VBoxContainer" parent="VBC/TC" unique_id=254772874]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 1

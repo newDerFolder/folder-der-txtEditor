@@ -20,6 +20,10 @@ config/icon="uid://dwq48bi8qdqaf"
 [autoload]
 
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
+DMainManager="*uid://dghqu1bk0kl05"
+DMessageManager="*uid://dbcvkwaksbnwa"
+DSaveManager="*uid://bfpoeg5fusesr"
+DSettingsManager="*uid://b6vajitinay80"
 
 [display]
 
@@ -29,7 +33,7 @@ window/handheld/orientation=1
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
+enabled=PackedStringArray("res://addons/der_framework/plugin.cfg", "res://addons/godot_ai/plugin.cfg")
 
 [input]
 

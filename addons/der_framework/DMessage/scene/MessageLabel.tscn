@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://vhqn5pv52s8g"]
+
+[ext_resource type="Script" uid="uid://cbwceesg7wh6e" path="res://addons/der_framework/DMessage/scene/message_label.gd" id="1_uf7ow"]
+
+[node name="MessageLabel" type="RichTextLabel" unique_id=1115360113]
+custom_minimum_size = Vector2(50, 33.735)
+offset_right = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+text = "阿三顶顶顶顶顶顶顶顶顶顶顶顶"
+fit_content = true
+script = ExtResource("1_uf7ow")

@@ -1,0 +1,36 @@
+keys,EN,CN,JP,KO
+创建本地账户,Create Local Account,创建本地账户,ローカルアカウントを作成,로컬 계정 생성
+确认,Confirm,确认,確認,확인
+请在此输入您的名称,Please enter your name here,请在此输入您的名称,ここに名前を入力してください,여기에 이름을 입력하세요
+在无尽生存模式中，您需要尽可能的多撑过敌人的进攻波次，随着时间的推移敌人会拥有越来越强大的科技与增益，带领您的部队尽可能撑住,In Endless Survival mode you need to survive as many enemy attack waves as possible. As time goes on enemies will gain increasingly powerful technologies and buffs. Lead your troops to hold on as long as you can.,在无尽生存模式中 您需要尽可能多地撑过敌人的进攻波次 随着时间的推移 敌人会拥有越来越强大的科技与增益。带领您的部队尽可能撑住。,エンドレスサバイバルモードでは、可能な限り多くの敵の攻撃波を生き延びる必要があります。時間の経過とともに敵はますます強力なテクノロジーとバフを獲得します。部隊を率いてできる限り持ちこたえてください。,무한 생존 모드에서는 가능한 한 많은 적의 공격 웨이브를 버텨내야 합니다. 시간이 지날수록 적은 점점 더 강력한 기술과 버프를 획득합니다. 부대를 이끌고 최대한 버텨내세요.
+最高生存波次为,Maximum survival wave is,最高生存波次为,最大生存ウェーブ数,최대 생존 웨이브
+从头开始,Start from Beginning,从头开始,最初から始める,처음부터 시작
+从最高波次开始,Start from Highest Wave,从最高波次开始,最高ウェーブから開始,최고 웨이브부터 시작
+服务器玩家排行,Server Player Rankings,服务器玩家排行,サーバープレイヤーランキング,서버 플레이어 랭킹
+每级提升25初始金币,+25 initial gold per level,每级提升25初始金币,レベルごとに初期ゴールド+25,레벨당 초기 골드 +25
+每级提升1点击杀敌人获得的科技点,+1 technology point per enemy kill per level,每级提升1点击杀敌人获得的科技点,レベルごとに敵キルで得るテクノポイント+1,레벨당 적 처치 시 획득 테크 포인트 +1
+提高500点基地hp,+500 base HP,提高500点基地hp,基地HP+500,기지 HP +500
+允许在战斗中将基地升级至中级基地,Allows upgrading base to Intermediate level during battle,允许在战斗中将基地升级至中级基地,戦闘中に基地を中級にアップグレード可能,전투 중 기지를 중급으로 업그레이드 가능
+每秒回复1基地hp,+1 base HP regeneration per second,每秒回复1基地hp,基地HPが毎秒1回復,기지 HP 초당 1 회복
+当基地hp小于500时紧急呼叫4辆游击车支援战场,Calls 4 guerrilla vehicles for emergency support when base HP drops below 500,当基地hp小于500时紧急呼叫4辆游击车支援战场,基地HPが500未満になると遊撃車両4台を緊急召喚,기지 HP가 500 미만일 때 유격 차량 4대 긴급 지원 호출
+为基地加装一挺自卫机枪,Adds a self-defense machine gun to the base,为基地加装一挺自卫机枪,基地に自衛用機関銃を追加装備,기지에 자위용 기관총 추가 장착
+开局金子+100,+100 gold at start,开局金子+100,開始時ゴールド+100,시작 시 골드 +100
+提高10点基地金矿产出,+10 base gold mine output,提高10点基地金矿产出,基地金鉱産出量+10,기지 금광 생산량 +10
+为您的步兵配备一个医疗包,在其生命受损时士兵会用它,Equip your infantry with a medical kit. Soldiers will use it when their health is damaged.,为您的步兵配备一个医疗包，在其生命受损时士兵会使用它。,歩兵に医療キットを装備。HPが減った時に兵士が使用します。,보병에게 의료 키트를 지급합니다. 체력이 손상되면 병사가 사용합니다.
+他们能够为您争夺战场上的金矿，必要时他们也具有一定的战斗力,They can seize gold mines on the battlefield for you and they also have certain combat capabilities when necessary.,他们能够为您争夺战场上的金矿，必要时也具有一定的战斗力。,戦場の金鉱を奪取でき、必要に応じて戦闘も可能です。,전장의 금광을 탈취할 수 있으며  필요시 일정한 전투력도 갖추고 있습니다.
+为您的步兵装备外骨骼，提高25移速，提高10携带金子,Equip your infantry with exoskeleton, +25 movement speed, +10 gold carrying capacity,为您的步兵装备外骨骼，提高25移速，提高10携带金子,歩兵に外骨格を装備、移動速度+25、携帯ゴールド+10,보병에게 외골격 장착, 이동속도 +25, 휴대 골드 +10
+为您的步兵购买保险,战斗中身亡时返还10金子,Purchase insurance for your infantry, refunds 10 gold when killed in combat,为您的步兵购买保险，战斗中阵亡时返还10金子。,歩兵に保険を購入、戦闘で死亡時にゴールド10返還,보병에게 보험 구매, 전투 중 사망 시 골드 10 환급
+为您的步兵携带背包,携带金子+10,Equip your infantry with a backpack, +10 gold carrying capacity,为您的步兵携带背包，携带金子+10。,歩兵にバックパックを装備、携帯ゴールド+10,보병에게 배낭 지급, 휴대 골드 +10
+为您的步兵提高防弹头盔,步兵hp+5,Equip your infantry with a bulletproof helmet, +5 infantry HP,为您的步兵配备防弹头盔，步兵hp+5。,歩兵に防弾ヘルメットを装備、歩兵HP+5,보병에게 방탄헬멧 지급, 보병 HP +5
+为您的步兵提高基本防弹衣,步兵hp+5,Equip your infantry with basic body armor, +5 infantry HP,为您的步兵配备基本防弹衣，步兵hp+5。,歩兵に基本防弾チョッキを装備、歩兵HP+5,보병에게 기본 방탄복 지급, 보병 HP +5
+在战斗中每30秒生成一个游击车,Spawns a guerrilla vehicle every 30 seconds during combat,在战斗中每30秒生成一个游击车,戦闘中30秒ごとに遊撃車両を1台生成,전투 중 30초마다 유격 차량 1대 생성
+提高游击车主炮的瞄准速度,Increases guerrilla vehicle main gun aiming speed,提高游击车主炮的瞄准速度,遊撃車両の主砲照準速度を向上,유격 차량 주포 조준 속도 향상
+提高游击车25hp,+25 guerrilla vehicle HP,提高游击车25hp,遊撃車両HP+25,유격 차량 HP +25
+为游击车额外加装一挺机枪,Adds an extra machine gun to the guerrilla vehicle,为游击车额外加装一挺机枪,遊撃車両に追加機関銃を装備,유격 차량에 추가 기관총 장착
+提高游击车25点移动速度,+25 guerrilla vehicle movement speed,提高游击车25点移动速度,遊撃車両の移動速度+25,유격 차량 이동속도 +25
+允许您在战斗中生产火箭车,Allows you to produce rocket vehicles during combat,允许您在战斗中生产火箭车,戦闘中にロケット車両を生産可能,전투 중 로켓 차량 생산 가능
+这些火箭炮能够有效打击成群结队的敌人,These rocket launchers can effectively strike groups of enemies,这些火箭炮能够有效打击成群结队的敌人,これらのロケット砲は敵の集団に効果的にダメージを与えられます,이 로켓포는 적 무리를 효과적으로 타격할 수 있습니다
+为火箭车提高冷却再装填速度,Increases rocket vehicle cooling and reload speed,为火箭车提高冷却再装填速度,ロケット車両の冷却・再装填速度を向上,로켓 차량 냉각 및 재장전 속도 향상
+提高火箭车25点生命,+25 rocket vehicle HP,提高火箭车25点生命,ロケット車両HP+25,로켓 차량 HP +25
+为火箭车额外加装一挺车载机枪,Adds an extra vehicle-mounted machine gun to the rocket vehicle,为火箭车额外加装一挺车载机枪,ロケット車両に追加車載機関銃を装備,로켓 차량에 추가 차재 기관총 장착
+提高火箭车25点移动速度,+25 rocket vehicle movement speed,提高火箭车25点移动速度,ロケット車両の移動速度+25,로켓 차량 이동속도 +25

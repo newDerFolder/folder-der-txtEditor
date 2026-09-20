@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b6vajitinay80"]
+
+[ext_resource type="Script" uid="uid://bqa2g11pn2dsf" path="res://addons/der_framework/DSettings/der_settings.gd" id="1_4dgoq"]
+
+[node name="DerSettings" type="Node" unique_id=2032983403]
+script = ExtResource("1_4dgoq")

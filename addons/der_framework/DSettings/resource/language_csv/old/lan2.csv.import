@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://jc6q66elg4yb"
+
+[deps]
+
+files=["res://addons/der_framework/DSettings/resource/language_csv/old/lan2.EN.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.CN.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.JP.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.KO.translation"]
+
+source_file="res://addons/der_framework/DSettings/resource/language_csv/old/lan2.csv"
+dest_files=["res://addons/der_framework/DSettings/resource/language_csv/old/lan2.EN.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.CN.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.JP.translation", "res://addons/der_framework/DSettings/resource/language_csv/old/lan2.KO.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

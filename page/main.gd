@@ -45,6 +45,7 @@ var root_dir: String = ""
 
 # 右键菜单项 id。用枚举而不是裸数字，加/删菜单项时不用回来数顺序。
 enum MenuId {
+	NEW_FILE,               # 新建文件，只对目录出现
 	OPEN_WITH_DEFAULT,      # 用系统默认程序打开，只对不支持编辑的文件出现
 	OPEN_IN_FILE_MANAGER,
 	RENAME,
@@ -56,9 +57,21 @@ enum MenuId {
 # 当前右键目标（弹菜单时记下，点菜单项时用）
 var _menu_path: String = ""
 var _menu_is_dir: bool = false
+# 这一轮点击里已经切换过展开状态的目录路径，用来给双击去重：
+# Tree 把双击拆成"第一下当普通单击 + 第二下发 item_activated"，
+# 而第一下切没切取决于那一刻条目是否已被选中，所以第二下得靠这个变量判断。
+# 每次左键按下（双击的第二下除外）由 gui_input 清空。
+var _toggled_path: String = ""
 # 重命名对话框里的输入框，代码创建 —— AcceptDialog 会把子节点收进自己的内容区，
 # 手写 tscn 布局容易对不上
 var _rename_edit: LineEdit
+
+# 新建文件的对话框（同样代码创建，理由见 _open_as_text_dialog 那边的注释）
+var _new_file_dialog: ConfirmationDialog
+var _new_file_edit: LineEdit
+# 新建文件的目标目录。**在这里存一份**，不要等确认时再去读 _menu_path ——
+# 弹框期间用户还能右键别的条目，_menu_path 会跟着变，那样新文件可能落到别处去。
+var _new_file_dir: String = ""
 
 # 双击不支持编辑的文件时的"强制按文本打开"提醒框。
 # 同样在代码里建：main.tscn 里这排 AcceptDialog 的节点都带 unique_id，
@@ -174,6 +187,7 @@ func save_file():
 	var f = FileAccess.open(current_file_path, FileAccess.WRITE)
 	if f:
 		f.store_string(text_edit.text)   # 统一使用 text_edit
+		DMessageManager.add_top_message("保存成功")
 	else:
 		OS.alert("保存失败：" + str(FileAccess.get_open_error()))
 
@@ -228,10 +242,35 @@ func _setup_item_menu() -> void:
 
 	delete_dialog.confirmed.connect(_on_delete_confirmed)
 
+	# 新建文件的输入框和弹框。和重命名那条一样：AcceptDialog 会把子节点收进
+	# 自己的内容区，所以输入框代码里 new 出来塞进去。
+	_new_file_dialog = ConfirmationDialog.new()
+	_new_file_dialog.title = "新建文件"
+	_new_file_dialog.ok_button_text = "新建"
+	_new_file_dialog.cancel_button_text = "取消"
+	_new_file_dialog.min_size = Vector2i(420, 130)
+	_new_file_edit = LineEdit.new()
+	_new_file_edit.custom_minimum_size = Vector2(360, 0)
+	_new_file_dialog.add_child(_new_file_edit)
+	_new_file_dialog.register_text_enter(_new_file_edit)   # 输入框里回车 = 点确定
+	_new_file_dialog.confirmed.connect(_on_new_file_confirmed)
+	add_child(_new_file_dialog)
+
 func _on_file_tree_gui_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton and event.pressed and \
-			event.button_index == MOUSE_BUTTON_RIGHT):
-		return      # 只管右键按下；左键走 item_selected
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+
+	# 左键按下 = 一轮新点击的开始，把"这一轮已经切过哪个目录"的记账清掉。
+	# 只能在这里清：双击的两下之间不会再有任何信号，只有在按下那一刻清，
+	# 第二下才判断得出第一下到底切没切（见 _on_file_tree_item_activated）。
+	# 双击的第二下（double_click = true）**不能清**，否则正好把要判断的东西抹掉了。
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if not event.double_click:
+			_toggled_path = ""
+		return
+
+	if event.button_index != MOUSE_BUTTON_RIGHT:
+		return
 
 	# 这里必须用 event.position（Tree 局部坐标）来查条目，而不是读 get_selected()：
 	# 右键点在空处时选中项还停在原来那个条目上，读选中项会弹出上一个文件的菜单。
@@ -253,10 +292,15 @@ func _on_file_tree_gui_input(event: InputEvent) -> void:
 
 func _build_item_menu() -> void:
 	file_item_menu.clear()
+	# 菜单项 id 走枚举，所以在这里按条件增删不会影响别的项。
+	# 「新建文件」只对目录出现 —— 文件条目的上下文里"新建"没有说得通的目标目录。
+	# 放最上面是跟着资源管理器的习惯。
+	if _menu_is_dir:
+		file_item_menu.add_item("新建文件", MenuId.NEW_FILE)
+		file_item_menu.add_separator()
 	# 「用默认程序打开」只对"看得见但本编辑器打不开"的文件才有意义：
 	# 目录用「在文件管理器中打开」就够了，可编辑的文件本来就单击即开。
-	# 菜单项 id 走枚举，所以在这里按条件增删不会影响别的项。
-	if not _menu_is_dir and not _is_editable_file(_menu_path):
+	elif not _is_editable_file(_menu_path):
 		file_item_menu.add_item("用默认程序打开", MenuId.OPEN_WITH_DEFAULT)
 		file_item_menu.add_separator()
 	file_item_menu.add_item("在文件管理器中打开", MenuId.OPEN_IN_FILE_MANAGER)
@@ -269,6 +313,8 @@ func _build_item_menu() -> void:
 
 func _on_menu_id_pressed(id: int) -> void:
 	match id:
+		MenuId.NEW_FILE:
+			_prompt_new_file()
 		MenuId.OPEN_WITH_DEFAULT:
 			var err := OS.shell_open(_menu_path)
 			if err != OK:
@@ -287,6 +333,59 @@ func _on_menu_id_pressed(id: int) -> void:
 		MenuId.REFRESH:
 			refresh_file_tree()
 
+# ---------------- 新建文件 ----------------
+
+func _prompt_new_file() -> void:
+	# 目标目录在这里就定下来。弹框期间用户还能右键别的条目、把 _menu_path 改掉，
+	# 等确认时再读就不是当初右键的那个目录了。
+	_new_file_dir = _menu_path
+	var default_name := _default_new_file_name(_new_file_dir)
+	_new_file_edit.text = default_name
+	# 弹框里显示目录名而不是完整路径 —— 就是用户刚右键的那个，够认了
+	_new_file_dialog.dialog_text = "在「%s」里新建文件：" % _new_file_dir.get_file()
+	_new_file_dialog.popup_centered()
+	_new_file_edit.grab_focus()
+	_select_base_name_in(_new_file_edit)
+
+# 默认名。撞名就依次试「新建文件 (2).txt」这种，别让用户一打开弹框就先吃一个
+# "已存在同名文件"。上限纯粹是防死循环的保险，正常目录撞不到 1000 个。
+func _default_new_file_name(dir: String) -> String:
+	const BASE := "新建文件"
+	const EXT := ".txt"
+	var candidate := BASE + EXT
+	var i := 2
+	while FileAccess.file_exists(dir.path_join(candidate)) or \
+		  DirAccess.dir_exists_absolute(dir.path_join(candidate)):
+		candidate = "%s (%d)%s" % [BASE, i, EXT]
+		i += 1
+		if i > 999:
+			break
+	return candidate
+
+func _on_new_file_confirmed() -> void:
+	var dir := _new_file_dir
+	var name := _new_file_edit.text.strip_edges()
+
+	var reason := _validate_name_in_dir(dir, name)
+	if reason != "":
+		OS.alert(reason)
+		return
+
+	var new_path := dir.path_join(name)
+	var f := FileAccess.open(new_path, FileAccess.WRITE)
+	if f == null:
+		OS.alert("新建失败：" + str(FileAccess.get_open_error()))
+		return
+	f.close()     # 建完立刻关掉，别让句柄一直挂着
+
+	refresh_file_tree()
+	# 注意：这个助手会把新文件**载入编辑器**（它内部的 TreeItem.select() 会发
+	# item_selected，而那个信号的处理就是载入文件）。这是有意的，不是副作用失控 ——
+	# 本应用靠这条链子维持一个不变量：**树里的选中项和编辑器里的内容永远一致**，
+	# 另存为 / Ctrl+O 也都走它。不载入的话，用户新建完直接打字，敲进去的其实是
+	# 上一个还开着的文件，然后 Ctrl+S 就把它覆盖了。
+	_select_tree_item_for_path(new_path)
+
 # ---------------- 重命名 ----------------
 
 func _prompt_rename() -> void:
@@ -296,20 +395,30 @@ func _prompt_rename() -> void:
 	_rename_edit.grab_focus()
 	_select_base_name()
 
-# 只选中主名、不含扩展名，直接输入就能整体覆盖，又不用手动删掉 ".txt"
+# 重命名弹框里预选名字。目录没有扩展名，全选。
 func _select_base_name() -> void:
-	var full := _rename_edit.text
 	if _menu_is_dir:
 		_rename_edit.select_all()
 		return
-	var base := full.get_basename()
-	_rename_edit.select(0, base.length())
-	_rename_edit.caret_column = base.length()
+	_select_base_name_in(_rename_edit)
+
+# 只选中主名、不含扩展名，直接输入就能整体覆盖，又不用手动删掉 ".txt"。
+# 新建文件也走这个，所以默认名是 "新建文件.txt" 时，用户一打字就把"新建文件"
+# 整个替换掉、".txt" 后缀留着 —— 这就是那句"默认 txt"落到实处的地方。
+func _select_base_name_in(edit: LineEdit) -> void:
+	var base := edit.text.get_basename()
+	edit.select(0, base.length())
+	edit.caret_column = base.length()
 
 # 校验新名称能不能用。返回 "" 表示可用，否则返回给用户看的原因。
 # 单独拆出来是为了不起弹窗也能测 —— OS.alert 在 Windows 上是阻塞的，
 # 埋在里面的分支没法从脚本里驱动。
 func _validate_new_name(old_path: String, new_name: String) -> String:
+	return _validate_name_in_dir(old_path.get_base_dir(), new_name)
+
+# 校验 new_name 能不能落在 dir 这个目录里。重命名和新建文件共用同一套规则
+# （空名 / 非法字符 / 撞名），拆出来是为了两边不会各自长歪。
+func _validate_name_in_dir(dir: String, new_name: String) -> String:
 	if new_name == "":
 		return "名称不能为空"
 	if new_name.contains("/") or new_name.contains("\\") or \
@@ -317,7 +426,7 @@ func _validate_new_name(old_path: String, new_name: String) -> String:
 	   new_name.contains("\"") or new_name.contains("<") or new_name.contains(">") or \
 	   new_name.contains("|"):
 		return "名称不能包含下列字符：/ \\ : * ? \" < > |"
-	var new_path := old_path.get_base_dir().path_join(new_name)
+	var new_path := dir.path_join(new_name)
 	if FileAccess.file_exists(new_path) or DirAccess.dir_exists_absolute(new_path):
 		return "已存在同名文件或文件夹：" + new_name
 	return ""
@@ -576,6 +685,9 @@ func _on_file_tree_item_selected() -> void:
 
 	if _item_is_dir(item):
 		item.collapsed = not item.collapsed   # 目录：展开 / 折叠
+		# 记账：这一轮点击已经切过这个目录了。双击的第二下靠它去重，
+		# 不然会再切一次、两次正好抵消。见 _on_file_tree_item_activated。
+		_toggled_path = _item_path(item)
 		return
 
 	var path := _item_path(item)
@@ -602,9 +714,24 @@ func _on_file_tree_item_activated() -> void:
 	if item == null:
 		return
 
-	# 目录：这里什么都不做。双击的第一下已经发过 item_selected、把展开状态切过一次了，
-	# 再切一次正好抵消，用户会看到"双击文件夹没反应"。
+	# 目录：双击 = 展开 / 折叠。
+	# 这一下是双击的**第二下**，要不要切取决于第一下有没有已经切过 ——
+	# Tree 在双击的第一下会做一次普通单击该做的事：
+	#   第一下点在**没选中**的目录上 -> 发 item_selected -> _on_file_tree_item_selected
+	#                                那边已经切过一次了 -> 这里必须跳过
+	#   第一下点在**已选中**的目录上 -> allow_reselect=false 让 Tree 什么都不发
+	#                                -> 这里必须补切一次
+	# 不区分的话前者会切两次、净效果为零，就是用户看到的"双击文件夹没反应"。
+	# 记账在 _toggled_path，由 gui_input 在每次**非双击的**左键按下时清空。
 	if _item_is_dir(item):
+		# 只有鼠标双击才在目录上做事；键盘回车进来的直接放过（老行为就是回车不管目录）。
+		# 实测：双击的第二下触发这里时左键仍是按下状态，回车则不是，所以这个判断是准的。
+		# 不加这道判断的话，回车会不会切就取决于上一次点击是不是"重选"，成了一个说不清的行为。
+		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			return
+		if _toggled_path == _item_path(item):
+			return
+		item.collapsed = not item.collapsed
 		return
 
 	var path := _item_path(item)
