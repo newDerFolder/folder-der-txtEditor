@@ -3,7 +3,10 @@
 [ext_resource type="Script" uid="uid://ccctwko22qa63" path="res://page/main.gd" id="1_7vvka"]
 [ext_resource type="Theme" uid="uid://b5gghdljmhsw3" path="res://resource/folder.tres" id="1_jhugg"]
 [ext_resource type="Texture2D" uid="uid://d2alvwpkakrpv" path="res://asset/bg/tsBgHF.png" id="3_pmkfb"]
+[ext_resource type="Texture2D" uid="uid://c22agm6j4ifk5" path="res://asset/icon/saveIcon.png" id="4_5wg7p"]
+[ext_resource type="Texture2D" uid="uid://c150qfs88yuwm" path="res://asset/icon/txtIcon.png" id="4_7qu2h"]
 [ext_resource type="CodeHighlighter" uid="uid://bqsy83r5bx28m" path="res://resource/new_code_highlighter.tres" id="4_pmkfb"]
+[ext_resource type="Texture2D" uid="uid://bi15gqg8dxlvq" path="res://asset/icon/folderIcon.png" id="5_5wg7p"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
 script/source = "extends Button
@@ -60,12 +63,20 @@ layout_mode = 2
 layout_mode = 2
 
 [node name="SaveButton" type="Button" parent="VBC/PC/HBC" unique_id=1293850510]
+custom_minimum_size = Vector2(150, 0)
 layout_mode = 2
 text = "Save"
+icon = ExtResource("4_5wg7p")
+alignment = 0
+expand_icon = true
 
 [node name="SaveAsButton" type="Button" parent="VBC/PC/HBC" unique_id=1255082483]
+custom_minimum_size = Vector2(150, 0)
 layout_mode = 2
 text = "Save As"
+icon = ExtResource("4_5wg7p")
+alignment = 0
+expand_icon = true
 
 [node name="SettingButton" type="Button" parent="VBC/PC/HBC" unique_id=291950684]
 visible = false
@@ -74,12 +85,24 @@ text = "Setting"
 script = SubResource("GDScript_cee7s")
 
 [node name="Open" type="Button" parent="VBC/PC/HBC" unique_id=363884049]
+custom_minimum_size = Vector2(150, 0)
 layout_mode = 2
 text = "Open"
+icon = ExtResource("4_7qu2h")
+alignment = 0
+expand_icon = true
+
+[node name="OpenDirButton" type="Button" parent="VBC/PC/HBC" unique_id=1182736455]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "OpenDir"
+icon = ExtResource("5_5wg7p")
+alignment = 0
+expand_icon = true
 
 [node name="Label" type="Label" parent="VBC/PC/HBC" unique_id=171517441]
 layout_mode = 2
-text = "v0.1"
+text = "v0.2"
 
 [node name="Control2" type="Control" parent="VBC/PC/HBC" unique_id=699988984]
 custom_minimum_size = Vector2(50, 0)
@@ -93,11 +116,48 @@ size_flags_horizontal = 3
 layout_mode = 2
 text = "no file"
 
-[node name="SC" type="ScrollContainer" parent="VBC" unique_id=1534484378]
+[node name="SpC" type="SplitContainer" parent="VBC" unique_id=1371464677]
+layout_mode = 2
+size_flags_vertical = 3
+split_offsets = PackedInt32Array(300)
+split_offset = 300
+
+[node name="HBC" type="HBoxContainer" parent="VBC/SpC" unique_id=578171199]
+layout_mode = 2
+
+[node name="VBC" type="VBoxContainer" parent="VBC/SpC/HBC" unique_id=113053061]
+layout_mode = 2
+
+[node name="Button" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=2104356425]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+icon = ExtResource("5_5wg7p")
+expand_icon = true
+
+[node name="PC" type="PanelContainer" parent="VBC/SpC/HBC" unique_id=1641607152]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="VBC2" type="VBoxContainer" parent="VBC/SpC/HBC/PC" unique_id=956203640]
+layout_mode = 2
+
+[node name="PC" type="PanelContainer" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1901984669]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBC/SpC/HBC/PC/VBC2/PC" unique_id=770872228]
+layout_mode = 2
+text = "Explorer"
+
+[node name="FileTree" type="Tree" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1446380007]
+layout_mode = 2
+size_flags_vertical = 3
+hide_root = true
+
+[node name="SC" type="ScrollContainer" parent="VBC/SpC" unique_id=1534484378]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="TextEdit" type="TextEdit" parent="VBC/SC" unique_id=1640316979]
+[node name="TextEdit" type="TextEdit" parent="VBC/SpC/SC" unique_id=1640316979]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -165,6 +225,29 @@ access = 2
 filters = PackedStringArray("*.txt", "*.json", "*.csv")
 use_native_dialog = true
 
+[node name="FileDialogOpenDir" type="FileDialog" parent="." unique_id=1374902483]
+title = "Open a Directory"
+file_mode = 2
+access = 2
+use_native_dialog = true
+
+[node name="FileItemMenu" type="PopupMenu" parent="." unique_id=1594471223]
+
+[node name="RenameDialog" type="ConfirmationDialog" parent="." unique_id=1740215886]
+title = "重命名"
+initial_position = 2
+size = Vector2i(420, 130)
+ok_button_text = "重命名"
+cancel_button_text = "取消"
+
+[node name="DeleteDialog" type="ConfirmationDialog" parent="." unique_id=1108936477]
+title = "删除"
+initial_position = 2
+size = Vector2i(420, 130)
+ok_button_text = "移入回收站"
+cancel_button_text = "取消"
+
 [connection signal="pressed" from="VBC/PC/HBC/SaveButton" to="." method="_on_save_button_pressed"]
 [connection signal="pressed" from="VBC/PC/HBC/SaveAsButton" to="." method="_on_save_as_button_pressed"]
 [connection signal="pressed" from="VBC/PC/HBC/Open" to="." method="_on_open_pressed"]
+[connection signal="pressed" from="VBC/PC/HBC/OpenDirButton" to="." method="_on_open_dir_pressed"]

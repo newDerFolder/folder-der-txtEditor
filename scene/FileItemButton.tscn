@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://t87qaxl7k4ja"]
+
+[sub_resource type="GDScript" id="GDScript_ode3c"]
+script/source = "extends Button
+
+
+@export var file_name:String=\"\"
+"
+
+[node name="FileItemButton" type="Button" unique_id=253564426]
+script = SubResource("GDScript_ode3c")
