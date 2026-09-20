@@ -46,8 +46,20 @@ var root_dir: String = ""
 # 文件树头部那排「新建」按钮（和 Explorer 标题同一行）
 @onready var new_file_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFileButton
 @onready var new_folder_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFolderButton
+# 「收藏当前文件夹」。**这个按钮不是可有可无的便利**：树是 hide_root = true，当前打开的
+# 那个目录自己**没有行**，右键永远点不到它 —— 没有这个按钮，当前文件夹根本收藏不了。
+@onready var fav_dir_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/FavDirButton
+
+# 侧边栏那两样：标题，以及左边竖排的两个视图切换按钮。
+# 注意 scene 里叫 "Label" 的节点**有两个**（另一个是工具栏上的 "v0.2"），别漏掉 /HBC。
+@onready var view_label: Label = $VBC/SpC/HBC/PC/VBC2/PC/HBC/Label
+@onready var explorer_button: Button = $VBC/SpC/HBC/VBC/Button
+@onready var stars_button: Button = $VBC/SpC/HBC/VBC/Button2
 
 # 右键菜单项 id。用枚举而不是裸数字，加/删菜单项时不用回来数顺序。
+# 新项一律**追加在末尾**：插在中间会让后面所有 id 整体 +1，而 README §2 坑 12 / §7.16
+# 里记着 id=4 这类硬编码数字，将来照着调试会踩成"看着像功能坏了"的假故障。
+# 菜单的**显示顺序**由 add_item() 的调用顺序决定，和 id 数值无关。
 enum MenuId {
 	NEW_FILE,               # 新建文件，只对目录出现
 	NEW_FOLDER,             # 新建文件夹，只对目录出现
@@ -57,7 +69,24 @@ enum MenuId {
 	DELETE,
 	COPY_PATH,
 	REFRESH,
+	FAVORITE,               # 收藏 / 取消收藏，两棵树都出现
 }
+
+# ---------------- 收藏夹 ----------------
+
+# 收藏列表那棵树。**在代码里建**（理由见 _setup_fav_tree），所以它是普通成员变量 ——
+# 不能写成 @onready：@onready 在 _ready() 之前求值，那时候这个节点还不存在。
+var fav_tree: Tree
+# 收藏的绝对路径，顺序 = 用户收藏的先后（列表就按这个顺序显示）。
+# 这是内存里的**唯一真源**：树是从它重建出来的，落盘也是把它整个写进存档资源。
+var _favorites: Array[String] = []
+# 现在侧边栏显示的是不是收藏视图
+var _fav_view: bool = false
+# 当前弹出的那个右键菜单是冲着哪棵树弹的（file_tree 或 fav_tree）。
+# 菜单是共用的同一个，_build_item_menu / _on_menu_window_input 都要靠它认上下文。
+var _menu_source: Tree
+# 存档不可用时的告警只弹一次，不然每收藏一个就弹一条
+var _save_warned: bool = false
 
 # 当前右键目标（弹菜单时记下，点菜单项时用）
 var _menu_path: String = ""
@@ -100,6 +129,12 @@ var font_size=20
 func _ready():
 	_setup_explorer_buttons()
 	_setup_file_tree()
+	# 收藏树必须排在 _setup_file_tree() 之后：条目的图标是在那边备好的（_icon_dir/_icon_file/
+	# _icon_unsupported），先建的话行里会没图标，而且不报错。
+	_setup_fav_tree()
+	# 同理，也排在上面那个命令行参数循环之前 —— 启动时就带一个文件时，_ready() 里那句
+	# open_and_show 会顺着信号链碰到视图相关的东西，得保证 fav_tree 已经在了。
+	_setup_view_buttons()
 
 	# 取命令行传入的第一个真实文件。
 	# 「打开方式」传的是裸参数（get_cmdline_args），带 `--` 的调用 / 编辑器「启动参数」
@@ -213,6 +248,9 @@ func _on_save_as_button_pressed() -> void:
 
 # 另存为对话框选择文件后的处理
 func _on_save_as_file_selected(path: String) -> void:
+	# 工具栏是和视图无关的，在收藏视图下按它必须看得见结果，
+	# 否则选中项在**藏起来的**那棵树里被改掉，用户只会觉得"点了没反应"。
+	_set_view(false)
 	path = path.replace("\\", "/")
 	current_file_path = path
 	$VBC/PC/HBC/Label4.text = current_file_path
@@ -234,6 +272,7 @@ func _on_open_pressed() -> void:
 
 # 打开对话框选择文件后的处理
 func _on_open_file_selected(path: String) -> void:
+	_set_view(false)          # 同上：工具栏按钮的结果必须看得见
 	open_and_show(path)
 
 # OpenDir 按钮 - 弹出选择目录对话框
@@ -242,6 +281,7 @@ func _on_open_dir_pressed() -> void:
 
 # 选定目录后的处理：只换树根，不动当前打开的文件
 func _on_open_dir_selected(path: String) -> void:
+	_set_view(false)          # 同上；这里尤其明显 —— 收藏视图下换根，画面上什么都没发生
 	set_root_dir(path)
 
 # ---------------- 条目右键菜单 ----------------
@@ -307,22 +347,30 @@ func _on_file_tree_gui_input(event: InputEvent) -> void:
 	# 右键点在空处时选中项还停在原来那个条目上，读选中项会弹出上一个文件的菜单。
 	# 用 event.position 而不是读实时鼠标位置：真实点击时两者本就一致，
 	# 但这样不依赖"弹菜单那一刻鼠标还在原地"。
-	_open_item_menu_at(file_tree.get_global_position() + event.position)
+	_open_item_menu_at(file_tree.get_global_position() + event.position, file_tree)
 
 # 在**视口坐标**的 pos 处把条目菜单弹出来。空处不弹（什么也不做）。
-# 两个入口都走这里：Tree 的 gui_input（第一次右键），以及菜单自己的 window_input
+# 三个入口都走这里：两棵树的 gui_input（第一次右键），以及菜单自己的 window_input
 # （菜单开着时的右键 —— 那种情况下主视口收不到输入，见 _on_menu_window_input）。
-func _open_item_menu_at(vp_pos: Vector2) -> void:
-	# 点在树外面（编辑区、工具栏）就别弹了
-	if not file_tree.get_global_rect().has_point(vp_pos):
+# tree 是"冲着哪棵树弹的"：菜单只有**一个**（file_item_menu），收藏列表复用它 ——
+# 那套丝滑逻辑（关旧开新、点外面穿透）和"哪棵树"无关，它只看菜单自己的 position/size，
+# 树只影响这里的命中测试和菜单项内容。
+func _open_item_menu_at(vp_pos: Vector2, tree: Tree) -> void:
+	if tree == null:
 		return
-	var item := file_tree.get_item_at_position(vp_pos - file_tree.get_global_position())
+	# 点在树外面（编辑区、工具栏）就别弹了
+	if not tree.get_global_rect().has_point(vp_pos):
+		return
+	var item := tree.get_item_at_position(vp_pos - tree.get_global_position())
 	var path := _item_path(item)
 	if path == "":
-		return      # 点到空白处，或 "未指定目录" 占位条目
+		return      # 点到空白处，或 "未指定目录" / "还没有收藏" 占位条目
 
 	_menu_path = path
 	_menu_is_dir = _item_is_dir(item)
+	# 过了上面所有守卫才记上下文：半路 return 的话 _menu_source 必须还是上一轮那个，
+	# 否则 _on_menu_window_input 里的 call_deferred 会拿它去弹错树。
+	_menu_source = tree
 	_build_item_menu()
 
 	# 必须显式给坐标：Godot 4 的无参 popup() 弹在 (0,0)，不读鼠标位置
@@ -362,10 +410,18 @@ func _on_menu_window_input(event: InputEvent) -> void:
 	# 的过程中发出来的，同步 popup 会被这一轮的收尾搅掉，延后到帧末才稳（这一版实测 44 条断言全过）。
 	# 另外更正一个曾经写在这里的说法：引擎**不会**自己把这个菜单关掉，
 	# 早先日志里那句 popup_hide 是本函数上面自己的 hide() 发的，见 README §7.16。
-	_open_item_menu_at.call_deferred(vp_pos)
+	# call_deferred 的参数在**调用那一刻**求值，所以这里传的 _menu_source 正是本轮菜单
+	# 所属的那棵树（此刻菜单还没被换掉）。别顺手改成传个字面量。
+	_open_item_menu_at.call_deferred(vp_pos, _menu_source)
 
 func _build_item_menu() -> void:
 	file_item_menu.clear()
+
+	# 收藏列表是另一个上下文，菜单项另起一套（理由见 _build_fav_item_menu）
+	if _menu_source == fav_tree:
+		_build_fav_item_menu()
+		return
+
 	# 菜单项 id 走枚举，所以在这里按条件增删不会影响别的项。
 	# 「新建文件」只对目录出现 —— 文件条目的上下文里"新建"没有说得通的目标目录。
 	# 放最上面是跟着资源管理器的习惯。
@@ -379,12 +435,31 @@ func _build_item_menu() -> void:
 		file_item_menu.add_item("用默认程序打开", MenuId.OPEN_WITH_DEFAULT)
 		file_item_menu.add_separator()
 	file_item_menu.add_item("在文件管理器中打开", MenuId.OPEN_IN_FILE_MANAGER)
+	# 收藏 / 取消收藏是同一条目上的两态。文案跟着**当前状态**走，
+	# 用户扫一眼就知道点下去是加还是减，不用去猜。
+	file_item_menu.add_item("取消收藏" if _is_favorite(_menu_path) else "收藏", MenuId.FAVORITE)
 	file_item_menu.add_separator()
 	file_item_menu.add_item("重命名", MenuId.RENAME)
 	file_item_menu.add_item("删除", MenuId.DELETE)
 	file_item_menu.add_separator()
 	file_item_menu.add_item("复制完整路径", MenuId.COPY_PATH)
 	file_item_menu.add_item("刷新文件树", MenuId.REFRESH)
+
+# 收藏列表里的右键菜单。这里只给「取消收藏」+「在文件管理器中打开」：
+# 重命名 / 删除这些在收藏视图里操作的是**文件系统上的真实文件**，
+# 而用户点的时候心里想的是"这个收藏"，极易误删 —— 真要用，去 Explorer 视图里点。
+func _build_fav_item_menu() -> void:
+	file_item_menu.add_item("取消收藏", MenuId.FAVORITE)
+	file_item_menu.add_separator()
+	file_item_menu.add_item("在文件管理器中打开", MenuId.OPEN_IN_FILE_MANAGER)
+
+	# 路径不存在时判断不出它当初是文件还是目录，shell_show_in_file_manager 会失败，
+	# 而框架那边失败就 OS.alert —— 那东西在 Windows 上是**阻塞**的（README §7.8）。
+	# 所以直接禁掉这一项；「取消收藏」必须留着，那是用户唯一的出路。
+	if not _path_exists(_menu_path):
+		var idx := file_item_menu.get_item_index(MenuId.OPEN_IN_FILE_MANAGER)
+		if idx >= 0:
+			file_item_menu.set_item_disabled(idx, true)
 
 func _on_menu_id_pressed(id: int) -> void:
 	match id:
@@ -409,6 +484,9 @@ func _on_menu_id_pressed(id: int) -> void:
 			DisplayServer.clipboard_set(_menu_path)
 		MenuId.REFRESH:
 			refresh_file_tree()
+		MenuId.FAVORITE:
+			# 两棵树的菜单共用这一个 id：都是"把 _menu_path 这个目标的收藏状态翻一下"
+			_toggle_favorite(_menu_path)
 
 # ---------------- 新建文件 ----------------
 
@@ -520,11 +598,17 @@ func _on_new_folder_confirmed() -> void:
 	# 新目录保持默认的展开态。
 	_select_tree_item_for_path(new_path)
 
-# ---------------- 文件树头部的新建按钮 ----------------
+# ---------------- 文件树头部那排按钮（新建文件 / 新建文件夹 / 收藏当前文件夹） ----------------
 
 func _setup_explorer_buttons() -> void:
 	new_file_button.pressed.connect(_on_new_file_button_pressed)
 	new_folder_button.pressed.connect(_on_new_folder_button_pressed)
+	# toggle_mode 只为把"当前文件夹已经收藏了"显示出来。连 pressed 而不是 toggled：
+	# toggled 在状态没变时可能根本不发。回调里不去读按钮自己的状态 ——
+	# 状态是 _update_fav_dir_button() 用 set_pressed_no_signal() 同步过去的，
+	# 读它就等于让显示反过来决定行为（和两个视图按钮同一个道理）。
+	fav_dir_button.toggle_mode = true
+	fav_dir_button.pressed.connect(_on_fav_dir_button_pressed)
 	_update_new_buttons()
 
 # 头部按钮的目标目录 = **当前打开的这个文件夹**（root_dir），不看树里的选中项。
@@ -535,19 +619,54 @@ func _setup_explorer_buttons() -> void:
 func _new_target_dir() -> String:
 	return root_dir
 
+# 现在到底有没有"打开着的那个文件夹"。头部这排按钮全都以它为操作对象，所以共用这一个判断。
+func _has_open_dir() -> bool:
+	return root_dir != "" and DirAccess.dir_exists_absolute(root_dir)
+
 # 一个目录都没打开的时候把两个按钮禁掉。
 # 这不只是"灰着好看"：那种状态下 root_dir 是空串，path_join 出来是个**相对路径**，
 # 新建会落到进程的工作目录里去 —— 用户根本不知道文件建到哪儿了。
 func _update_new_buttons() -> void:
-	var can := root_dir != "" and DirAccess.dir_exists_absolute(root_dir)
+	var can := _has_open_dir()
 	new_file_button.disabled = not can
 	new_folder_button.disabled = not can
+
+# 没收藏时那颗星星的灰度。**光靠 toggle 那层"按下"底色是看不出来的** ——
+# 实测（两张截图逐像素比）按下只让按钮背景从 (40,42,43) 变成 (32,34,35)，差 15/255，
+# 一屏图标里根本认不出来。而这个按钮是个**开关**，再点一下就是取消收藏：
+# 状态看不出来的话，用户会点第二下把自己刚存的收藏悄悄删掉。
+# 用 modulate 染灰而不是再切一张图：主题里普通状态的底色几乎是透明的，乘上去看不出来。
+const FAV_DIR_OFF_TINT := Color(0.45, 0.45, 0.45, 1.0)
+
+# 收藏按钮的可用状态 + 按下态 + 图标明暗 + tooltip，全都只看两样东西：root_dir 和 _favorites。
+# **挂钩点只有三处**：refresh_file_tree()（换根目录 / 有没有目录，跟着 _update_new_buttons 走）、
+# _setup_fav_tree()（那时收藏才读进来）、_toggle_favorite()（收藏状态变了）。
+# 挂漏一处的症状就是"按钮显示的和实际状态对不上"。
+func _update_fav_dir_button() -> void:
+	var can := _has_open_dir()
+	fav_dir_button.disabled = not can
+	var faved := can and _is_favorite(root_dir)
+	# 禁用时也要把按下态和亮星星清掉：不禁的话，开着收藏过的 A 目录 → 关掉目录 →
+	# 按钮还亮着，看着像"还开着个收藏过的文件夹"
+	fav_dir_button.set_pressed_no_signal(faved)
+	fav_dir_button.modulate = Color.WHITE if faved else FAV_DIR_OFF_TINT
+	if not can:
+		fav_dir_button.tooltip_text = "收藏当前文件夹（先打开一个文件夹）"
+	elif faved:
+		fav_dir_button.tooltip_text = "已收藏当前文件夹，点击取消"
+	else:
+		fav_dir_button.tooltip_text = "收藏当前文件夹"
 
 func _on_new_file_button_pressed() -> void:
 	_prompt_new_file_in(_new_target_dir())
 
 func _on_new_folder_button_pressed() -> void:
 	_prompt_new_folder_in(_new_target_dir())
+
+# 目标恒为 root_dir，和「新建文件 / 新建文件夹」同源（理由见 _new_target_dir）：
+# 这排按钮说的都是"我现在打开的这个文件夹"，跟树里选中谁无关。
+func _on_fav_dir_button_pressed() -> void:
+	_toggle_favorite(_new_target_dir())
 
 # ---------------- 重命名 ----------------
 
@@ -723,6 +842,10 @@ func refresh_file_tree() -> void:
 	# 每一条能改变"有没有目录"的路径最后都会走到这里（换根、刷新、_setup_file_tree），
 	# 所以按钮的可用状态在这里统一更新，不用逐个调用点去接。
 	_update_new_buttons()
+	# 收藏按钮同理：换根目录会让"当前文件夹收藏没有"整个变掉，跟着这里走。
+	# （这里跑的时候 _favorites 可能还没读进来 —— 那时它是空的，按下态由
+	#   _setup_fav_tree() 尾巴上那一次补上。）
+	_update_fav_dir_button()
 
 	file_tree.clear()
 	var root := file_tree.create_item()
@@ -910,9 +1033,18 @@ func _on_file_tree_item_activated() -> void:
 		item.collapsed = not item.collapsed
 		return
 
-	var path := _item_path(item)
+	_activate_file_path(_item_path(item))
+
+# 「把这个文件打开」这件事**只在这里做一份**，文件树双击和收藏列表双击都走它。
+# 抽出来是因为下面两道守卫都是防丢字的，而 open_and_show() 自己一道都没有
+# （它由调用者负责，见 README §6）：
+#   1) `path == current_file_path` 那道：少了它，双击一个正在编辑的文件就会
+#      用盘上的旧内容把未保存的改动当场冲掉；
+#   2) 不在白名单里的文件必须经过 _open_as_text_dialog 的提醒：直接 open_and_show
+#      会绕过它，.docx 那类会灌一屏乱码进来，此时 Ctrl+S 就把原文件覆盖了。
+func _activate_file_path(path: String) -> void:
 	if path == "":
-		return                                # "未指定目录" 占位条目
+		return                                # "未指定目录" / "还没有收藏" 占位条目
 
 	# 已经在编辑器里就不重读。读盘会把没保存的改动直接冲掉 ——
 	# 顺手双击一下当前文件就丢字，那是比"没反应"糟得多的结果。
@@ -943,6 +1075,8 @@ func _on_open_as_text_confirmed() -> void:
 		return
 	var path := _pending_open_path
 	_pending_open_path = ""     # 先清再打开：open_and_show 会发 item_selected，别让它重入
+	# 这条链子也可能从收藏视图发起（双击收藏的 .docx）。打开动作一律回到 Explorer 视图
+	_set_view(false)
 	open_and_show(path)
 
 # 在树里定位并选中某个文件，同时逐级展开它的祖先目录
@@ -974,3 +1108,229 @@ func _find_tree_item(parent: TreeItem, path: String) -> TreeItem:
 			return found
 		child = child.get_next()
 	return null
+
+# ---------------- 收藏夹 ----------------
+
+# 收藏列表那棵树。**在代码里建**，不往 main.tscn 里手写节点：
+# 这排 AcceptDialog 之外的节点都带 unique_id，手写 tscn 容易把 id 写错或写重，
+# 交给 Godot 自己保存场景时落盘更安全（README §7.9 的老规矩）。
+# 它和 FileTree 是同一个 VBoxContainer 里的兄弟节点，靠 visible 互斥显示出切换效果。
+func _setup_fav_tree() -> void:
+	fav_tree = Tree.new()
+	fav_tree.name = "FavTree"
+	fav_tree.hide_root = true
+	# 右键也选中条目，给个高亮反馈（和 FileTree 一致）
+	fav_tree.allow_rmb_select = true
+	# 不开 allow_reselect，理由和 FileTree 一样：折叠 -> 重选 -> 折叠 会每帧振荡到崩
+	fav_tree.allow_reselect = false
+	fav_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	fav_tree.visible = false
+	# 只接 item_activated（双击 / 回车）。**不接 item_selected** —— 需求就是"单击不做任何事"，
+	# 所以这里完全用不上 FileTree 那套服务于单击的记账（_toggled_path / _suppress_dir_toggle）。
+	fav_tree.item_activated.connect(_on_fav_item_activated)
+	fav_tree.gui_input.connect(_on_fav_tree_gui_input)
+	# 追加在 FileTree 之后，和它并排（同一个 VBoxContainer）
+	file_tree.get_parent().add_child(fav_tree)
+
+	_load_favorites()
+	refresh_fav_tree()
+	# 收藏读进来之后才谈得上"当前文件夹收藏没有"，所以同步放在这里（不是 _setup_explorer_buttons）
+	_update_fav_dir_button()
+
+# 从存档资源里把收藏读回内存。读不到就当空收藏夹，不报错 ——
+# 存档不可用是"功能没得用"，而"打开软件先挨一条错误"对用户没有任何帮助。
+func _load_favorites() -> void:
+	_favorites.clear()
+	if DSaveManager == null or DSaveManager.cur_res == null:
+		return
+	# 老存档里没有 favorite_paths 这个字段，取到的是默认的空数组，其余字段照旧
+	for p in DSaveManager.cur_res.favorite_paths:
+		var norm := _normalize_path(p)
+		if norm != "" and not _favorites.has(norm):
+			_favorites.append(norm)
+
+# 把内存里的收藏写回存档资源。
+func _save_favorites() -> void:
+	var res = DSaveManager.cur_res
+	if res == null or res.save_name == "":
+		# 存不了必须**说出来**。"收藏了一堆、重启全没了"这种静默失败，
+		# 比一条错误提示糟得多 —— 用户要到下次开机才发现，那时已经找不回来了。
+		if not _save_warned:
+			_save_warned = true
+			push_warning("收藏夹无法保存：DSaveManager.cur_res 不可用")
+			DMessageManager.add_top_message("收藏无法保存：存档不可用")
+		return
+	res.favorite_paths = _favorites.duplicate()
+	# 注意这条会顺手更新 last_modified_timestamp，并弹一条"存档保存成功"的顶部提示 ——
+	# 是用户明确要求的存法（走框架的 save_cur_res()），接受。
+	DSaveManager.save_cur_res()
+
+# 路径的规范形式：正斜杠、无 ./ 和 ../、无结尾斜杠。
+# 统一了才比得准 —— 否则同一个目录从对话框选进来是 "C:/a/b/"，从树里点出来是 "C:/a/b"，
+# 会被当成两个不同的收藏各存一条。
+func _normalize_path(p: String) -> String:
+	if p.strip_edges() == "":
+		return ""
+	var n := p.replace("\\", "/").simplify_path()
+	if n.length() > 1 and n.ends_with("/"):
+		n = n.substr(0, n.length() - 1)
+	return n
+
+func _path_exists(path: String) -> bool:
+	# 两头都要判：收藏的可能是文件也可能是目录。
+	# 只判文件的话，每一个收藏的文件夹都会被标成"路径不存在"。
+	return FileAccess.file_exists(path) or DirAccess.dir_exists_absolute(path)
+
+# 重建收藏列表（和 refresh_file_tree 一个风格：整个清掉重来）。
+# 挂钩点只有三处：_setup_fav_tree() 尾部、_set_view(true) 开头、_toggle_favorite() 尾部。
+# **不要**挂到 refresh_file_tree() 上 —— 它在"未指定目录"那条路上是 return，
+# 挂函数尾会被直接跳过。
+func refresh_fav_tree() -> void:
+	if fav_tree == null:
+		return
+	fav_tree.clear()
+	var root := fav_tree.create_item()
+
+	if _favorites.is_empty():
+		var hint := fav_tree.create_item(root)
+		hint.set_text(0, "还没有收藏")
+		hint.set_tooltip_text(0, "在文件树里右键文件或文件夹 → 收藏")
+		hint.set_selectable(0, false)     # 占位条目点不动，也就不会把双击送出去
+		return
+
+	for path in _favorites:
+		var is_dir := DirAccess.dir_exists_absolute(path)
+		var missing := not is_dir and not FileAccess.file_exists(path)
+		var item := fav_tree.create_item(root)
+		# 只写名字的话，几个同名文件（各目录下的 README.md）在一屏里分不清，所以带上父目录。
+		# 带的是父目录**名字**而不是完整路径：侧边栏默认只有 300 像素，Tree 从右边裁长文本，
+		# 写全路径实测显示成 "a.txt  —  C:/Users/klderm…" —— 留下的恰好是所有条目都相同的
+		# 那一截前缀，等于什么都没写，还白占半行。父目录名才是能区分开的那一个词。
+		# 完整路径在 tooltip 里，鼠标一停就有（下面那行），需要时也可以拖宽侧边栏。
+		var parent_name := path.get_base_dir().get_file()
+		if parent_name.length() > 20:
+			parent_name = "…" + parent_name.substr(parent_name.length() - 20)
+		item.set_text(0, "%s  —  %s" % [path.get_file(), parent_name])
+		item.set_icon(0, _icon_dir if is_dir else \
+			(_icon_unsupported if missing else _icon_file))
+		item.set_tooltip_text(0, path + ("\n（路径不存在）" if missing else ""))
+		item.set_metadata(0, {"path": path, "dir": is_dir, "missing": missing})
+		if missing:
+			# 灰显而不是删掉：外接盘 / 网络盘临时断线是常有的事，
+			# 不能因为这一次读不到就把用户存的东西自动清掉。
+			item.set_custom_color(0, Color(1, 1, 1, 0.4))
+
+func _is_favorite(path: String) -> bool:
+	return _favorites.has(_normalize_path(path))
+
+# 收藏 / 取消收藏某个路径（文件或文件夹都行）
+func _toggle_favorite(path: String) -> void:
+	var norm := _normalize_path(path)
+	if norm == "":
+		return
+	if _favorites.has(norm):
+		_favorites.erase(norm)
+	else:
+		_favorites.append(norm)     # 追加在末尾：列表顺序 = 收藏的先后
+	_save_favorites()
+	refresh_fav_tree()
+	_update_fav_dir_button()    # 收藏的可能正是当前文件夹，按钮的按下态要跟着变
+
+func _on_fav_tree_gui_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	if event.button_index != MOUSE_BUTTON_RIGHT:
+		return
+	# 和 _on_file_tree_gui_input 同一个套路：用 event.position（Tree 局部）换算成视口坐标，
+	# 而不是读 get_selected() —— 右键点在空处时选中项还停在原来那个条目上。
+	_open_item_menu_at(fav_tree.get_global_position() + event.position, fav_tree)
+
+# 收藏列表里双击条目（或选中后回车）
+func _on_fav_item_activated() -> void:
+	var item := fav_tree.get_selected()
+	if item == null:
+		return
+	var m = item.get_metadata(0)
+	if not (m is Dictionary):
+		return          # "还没有收藏" 占位条目
+
+	var path: String = m["path"]
+
+	if m["missing"]:
+		# 只提示，**不**自动删收藏 —— 见 refresh_fav_tree 里的理由。
+		# 而且刻意留在收藏视图：用户多半正想右键「取消收藏」清理它。
+		DMessageManager.add_top_message("路径不存在：" + path)
+		return
+
+	if m["dir"]:
+		_reveal_in_file_tree(path)
+		return
+
+	# 文件：切回文件预览再走统一的打开链路
+	_set_view(false)
+	_activate_file_path(path)
+
+# 在文件树里把某个**目录**显示出来（收藏列表双击文件夹走这里）。
+func _reveal_in_file_tree(path: String) -> void:
+	_set_view(false)          # 先切回文件预览，再操作那棵看得见的树
+
+	if path == root_dir:
+		# 收藏的就是当前根目录。根条目本身不显示（hide_root = true），
+		# 切回视图就已经是"跳过去了"。
+		return
+
+	if not _is_under(path, root_dir):
+		# 不在当前根下：换根过去，等同按 OpenDir。
+		# 之后**不要**再 _select_tree_item_for_path()：树根条目没有 metadata，
+		# _item_path(root) 恒为空串，永远找不到（白调）；而万一将来有人给根条目加了
+		# metadata，一次 select() 落到根上会把 root.collapsed 翻成 true，
+		# 在 hide_root = true 之下整个 Explorer 会**空掉**。
+		set_root_dir(path)
+		return
+
+	_select_tree_item_for_path(path)
+	# _select_tree_item_for_path 只展开**祖先链**，目标自己的 collapsed 它一个指头都不碰
+	# （_suppress_dir_toggle 正好把它压住了）。需求要的是"跳过去看得见"，
+	# 所以这里补一句展开它自己 —— 不然双击一个已折叠的收藏文件夹会"选中了但还是收着的"。
+	var it := _find_tree_item(file_tree.get_root(), path)
+	if it != null and _item_is_dir(it):
+		it.collapsed = false
+		file_tree.scroll_to_item(it)
+
+# ---------------- 视图切换（Explorer / 收藏） ----------------
+
+func _setup_view_buttons() -> void:
+	# toggle_mode 只为把"现在在哪一边"显示出来。连的是 **pressed** 而不是 toggled：
+	# toggled 在状态没变时可能根本不发（点已经按下的那一个），回调就漏了。
+	# 回调里显式 bind 目标视图，不读按钮自己的状态 —— 状态是被 _set_view 同步过去的，
+	# 读它就等于让显示反过来决定行为。
+	explorer_button.toggle_mode = true
+	stars_button.toggle_mode = true
+	explorer_button.pressed.connect(_set_view.bind(false))
+	stars_button.pressed.connect(_set_view.bind(true))
+	# 初始那一次也走 _set_view，按钮按下态和标题才不会漏设
+	_set_view(false)
+
+func _set_view(fav: bool) -> void:
+	_fav_view = fav
+
+	if fav:
+		refresh_fav_tree()     # 进收藏视图时重建列表：期间文件可能被删了/新增了收藏
+
+	file_tree.visible = not fav
+	fav_tree.visible = fav
+	view_label.text = "收藏" if fav else "Explorer"
+	# 一、二、三个头部按钮的语义都是"对着当前打开的那个文件夹做点什么"，收藏视图里
+	# Explorer 整个不在，它们没有落脚点，一起藏起来。
+	# （作用目标本来就是 root_dir，和树里选中谁无关，见 _new_target_dir）
+	new_file_button.visible = not fav
+	new_folder_button.visible = not fav
+	fav_dir_button.visible = not fav
+	# set_pressed_**no_signal**：set_pressed() 会发 toggled，
+	# 程序化同步一下就绕回去了。
+	explorer_button.set_pressed_no_signal(not fav)
+	stars_button.set_pressed_no_signal(fav)
+	# 两棵树在同一个容器里，隐藏的那棵会被跳过、可见的那棵吃掉全部高度 ——
+	# 但容器会不会重排取决于 min size 有没有变，两棵树的 min size 又可能一样。
+	# 不主动排一次的话症状是"切过去只有半高，拖一下窗口才正常"。
+	file_tree.get_parent().queue_sort()

@@ -169,6 +169,13 @@ text = "新建文件"
 layout_mode = 2
 text = "新建文件夹"
 
+[node name="FavDirButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234504]
+custom_minimum_size = Vector2(36, 0)
+layout_mode = 2
+tooltip_text = "收藏当前文件夹"
+icon = ExtResource("7_5wg7p")
+expand_icon = true
+
 [node name="FileTree" type="Tree" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1446380007]
 layout_mode = 2
 size_flags_vertical = 3

@@ -12,6 +12,11 @@ class_name DerSaveRes extends Resource
 ## 存档名称
 @export var save_name: String = "NewSave"
 
+## 收藏的文件 / 文件夹的绝对路径（正斜杠、无结尾斜杠）。
+## 存全路径而不是相对路径：收藏的目的就是跨目录跳，相对某个 root_dir 没有意义。
+## 老存档里没有这个字段，加载时取默认值 []，其余字段照旧。
+@export var favorite_paths: Array[String] = []
+
 # 获取格式化的创建时间字符串
 func get_create_time_str() -> String:
 	if create_timestamp > 0:
