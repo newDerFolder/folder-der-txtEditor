@@ -7,6 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://c150qfs88yuwm" path="res://asset/icon/txtIcon.png" id="4_7qu2h"]
 [ext_resource type="CodeHighlighter" uid="uid://bqsy83r5bx28m" path="res://resource/new_code_highlighter.tres" id="4_pmkfb"]
 [ext_resource type="Texture2D" uid="uid://bi15gqg8dxlvq" path="res://asset/icon/folderIcon.png" id="5_5wg7p"]
+[ext_resource type="Texture2D" uid="uid://c5emdqcoi8if" path="res://asset/icon/start.png" id="7_5wg7p"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
 script/source = "extends Button
@@ -131,7 +132,15 @@ layout_mode = 2
 [node name="Button" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=2104356425]
 custom_minimum_size = Vector2(40, 40)
 layout_mode = 2
+tooltip_text = "Explorer"
 icon = ExtResource("5_5wg7p")
+expand_icon = true
+
+[node name="Button2" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=401970257]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+tooltip_text = "Stars"
+icon = ExtResource("7_5wg7p")
 expand_icon = true
 
 [node name="PC" type="PanelContainer" parent="VBC/SpC/HBC" unique_id=1641607152]
@@ -144,9 +153,21 @@ layout_mode = 2
 [node name="PC" type="PanelContainer" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1901984669]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="VBC/SpC/HBC/PC/VBC2/PC" unique_id=770872228]
+[node name="HBC" type="HBoxContainer" parent="VBC/SpC/HBC/PC/VBC2/PC" unique_id=1601234501]
 layout_mode = 2
+
+[node name="Label" type="Label" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=770872228]
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Explorer"
+
+[node name="NewFileButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234502]
+layout_mode = 2
+text = "新建文件"
+
+[node name="NewFolderButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234503]
+layout_mode = 2
+text = "新建文件夹"
 
 [node name="FileTree" type="Tree" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1446380007]
 layout_mode = 2
@@ -216,14 +237,14 @@ text = "专注模式(F11)"
 
 [node name="FileDialogSave" type="FileDialog" parent="." unique_id=179431967]
 access = 2
-filters = PackedStringArray("*.txt", "*.json", "*.csv")
+filters = PackedStringArray("*.* ; 所有文件")
 use_native_dialog = true
 
 [node name="FileDialogOpen" type="FileDialog" parent="." unique_id=1189286666]
 title = "Open a File"
 file_mode = 0
 access = 2
-filters = PackedStringArray("*.txt", "*.json", "*.csv")
+filters = PackedStringArray("*.* ; 所有文件")
 use_native_dialog = true
 
 [node name="FileDialogOpenDir" type="FileDialog" parent="." unique_id=1374902483]

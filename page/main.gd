@@ -43,9 +43,14 @@ var root_dir: String = ""
 @onready var rename_dialog: ConfirmationDialog = $RenameDialog
 @onready var delete_dialog: ConfirmationDialog = $DeleteDialog
 
+# 文件树头部那排「新建」按钮（和 Explorer 标题同一行）
+@onready var new_file_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFileButton
+@onready var new_folder_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFolderButton
+
 # 右键菜单项 id。用枚举而不是裸数字，加/删菜单项时不用回来数顺序。
 enum MenuId {
 	NEW_FILE,               # 新建文件，只对目录出现
+	NEW_FOLDER,             # 新建文件夹，只对目录出现
 	OPEN_WITH_DEFAULT,      # 用系统默认程序打开，只对不支持编辑的文件出现
 	OPEN_IN_FILE_MANAGER,
 	RENAME,
@@ -62,6 +67,11 @@ var _menu_is_dir: bool = false
 # 而第一下切没切取决于那一刻条目是否已被选中，所以第二下得靠这个变量判断。
 # 每次左键按下（双击的第二下除外）由 gui_input 清空。
 var _toggled_path: String = ""
+# 程序化选中（_select_tree_item_for_path）期间，屏蔽掉"目录被选中 = 切换展开状态"这个副作用。
+# 不加这个开关的话：重命名一个目录会把它翻成折叠的（里面的文件当场从树里消失），
+# 新建文件夹则会得到一个"刚建出来就是折叠"的目录 —— 都是 select() 发 item_selected 惹的。
+# 只在这一个函数里、只围着一句 select(0) 有效，见那里的注释。
+var _suppress_dir_toggle: bool = false
 # 重命名对话框里的输入框，代码创建 —— AcceptDialog 会把子节点收进自己的内容区，
 # 手写 tscn 布局容易对不上
 var _rename_edit: LineEdit
@@ -73,6 +83,11 @@ var _new_file_edit: LineEdit
 # 弹框期间用户还能右键别的条目，_menu_path 会跟着变，那样新文件可能落到别处去。
 var _new_file_dir: String = ""
 
+# 新建文件夹的那一套，和上面完全对称
+var _new_folder_dialog: ConfirmationDialog
+var _new_folder_edit: LineEdit
+var _new_folder_dir: String = ""
+
 # 双击不支持编辑的文件时的"强制按文本打开"提醒框。
 # 同样在代码里建：main.tscn 里这排 AcceptDialog 的节点都带 unique_id，
 # 手写 tscn 容易把那个 id 写错或写重，交给 Godot 自己保存场景时落盘更安全。
@@ -83,6 +98,7 @@ var _pending_open_path: String = ""
 var font_size=20
 
 func _ready():
+	_setup_explorer_buttons()
 	_setup_file_tree()
 
 	# 取命令行传入的第一个真实文件。
@@ -232,6 +248,8 @@ func _on_open_dir_selected(path: String) -> void:
 
 func _setup_item_menu() -> void:
 	file_item_menu.id_pressed.connect(_on_menu_id_pressed)
+	# 菜单开着时的输入只能从菜单这边拿（原因见 _on_menu_window_input）
+	file_item_menu.window_input.connect(_on_menu_window_input)
 
 	# 重命名输入框
 	_rename_edit = LineEdit.new()
@@ -256,6 +274,19 @@ func _setup_item_menu() -> void:
 	_new_file_dialog.confirmed.connect(_on_new_file_confirmed)
 	add_child(_new_file_dialog)
 
+	# 新建文件夹：除了标题、按钮文案和默认名，其余和上面那份一模一样
+	_new_folder_dialog = ConfirmationDialog.new()
+	_new_folder_dialog.title = "新建文件夹"
+	_new_folder_dialog.ok_button_text = "新建"
+	_new_folder_dialog.cancel_button_text = "取消"
+	_new_folder_dialog.min_size = Vector2i(420, 130)
+	_new_folder_edit = LineEdit.new()
+	_new_folder_edit.custom_minimum_size = Vector2(360, 0)
+	_new_folder_dialog.add_child(_new_folder_edit)
+	_new_folder_dialog.register_text_enter(_new_folder_edit)
+	_new_folder_dialog.confirmed.connect(_on_new_folder_confirmed)
+	add_child(_new_folder_dialog)
+
 func _on_file_tree_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed):
 		return
@@ -272,9 +303,20 @@ func _on_file_tree_gui_input(event: InputEvent) -> void:
 	if event.button_index != MOUSE_BUTTON_RIGHT:
 		return
 
-	# 这里必须用 event.position（Tree 局部坐标）来查条目，而不是读 get_selected()：
+	# 用 event.position（Tree 局部坐标）换算成视口坐标去查条目，而不是读 get_selected()：
 	# 右键点在空处时选中项还停在原来那个条目上，读选中项会弹出上一个文件的菜单。
-	var item := file_tree.get_item_at_position(event.position)
+	# 用 event.position 而不是读实时鼠标位置：真实点击时两者本就一致，
+	# 但这样不依赖"弹菜单那一刻鼠标还在原地"。
+	_open_item_menu_at(file_tree.get_global_position() + event.position)
+
+# 在**视口坐标**的 pos 处把条目菜单弹出来。空处不弹（什么也不做）。
+# 两个入口都走这里：Tree 的 gui_input（第一次右键），以及菜单自己的 window_input
+# （菜单开着时的右键 —— 那种情况下主视口收不到输入，见 _on_menu_window_input）。
+func _open_item_menu_at(vp_pos: Vector2) -> void:
+	# 点在树外面（编辑区、工具栏）就别弹了
+	if not file_tree.get_global_rect().has_point(vp_pos):
+		return
+	var item := file_tree.get_item_at_position(vp_pos - file_tree.get_global_position())
 	var path := _item_path(item)
 	if path == "":
 		return      # 点到空白处，或 "未指定目录" 占位条目
@@ -285,10 +327,42 @@ func _on_file_tree_gui_input(event: InputEvent) -> void:
 
 	# 必须显式给坐标：Godot 4 的无参 popup() 弹在 (0,0)，不读鼠标位置
 	# （那是 Godot 3 的行为，别按老文档想当然）。
-	# 实测 popup(rect) 的 rect 吃的是**视口局部坐标**，所以把 Tree 局部坐标加上
-	# Tree 自身的全局位置换算过去。用 event.position 而不是读实时鼠标位置：
-	# 真实点击时两者本就一致，但这样不依赖"弹菜单那一刻鼠标还在原地"。
-	file_item_menu.popup(Rect2i(file_tree.get_global_position() + event.position, Vector2i.ZERO))
+	# 实测 popup(rect) 的 rect 吃的是**视口局部坐标**，和上面算 vp_pos 用的是同一套。
+	file_item_menu.popup(Rect2i(Vector2i(vp_pos), Vector2i.ZERO))
+
+# 菜单开着的时候，主视口**收不到任何输入** —— 嵌入式子窗口会把事件全吞掉，
+# 只转发到它自己的视口（实测：主视口那边连一次 gui_input 都不发，见 README §7.16）。
+# 所以"在菜单外面又点了一下"这件事，只有菜单自己能告诉我们，window_input 就是那个口子。
+# 不接它的话症状就是用户说的那个：右键一个条目弹出菜单后，再右键别的条目**没反应**
+# （菜单还开着，也不换目标），得先左键点一下把菜单关掉再来 —— 就是"不丝滑"。
+func _on_menu_window_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed:
+		return
+
+	# 点在菜单**里面**是"选条目"，交回给菜单自己处理，别插手
+	if Rect2(Vector2.ZERO, file_item_menu.size).has_point(mb.position):
+		return
+
+	# event.position 是菜单**局部**坐标，加上菜单位置才是视口坐标
+	# （实测菜单局部 (0,-61.5) + 菜单在 (172,151) = 当初点下去的那个 (172,89.5)）
+	var vp_pos := Vector2(file_item_menu.position) + mb.position
+	file_item_menu.hide()
+
+	if mb.button_index != MOUSE_BUTTON_RIGHT:
+		# 左键点外面：关掉菜单就完事 —— **但不必手动补发点击**。实测这一下会自己
+		# 继续走到主视口上：菜单一藏，同一个按下事件就落到它盖着的那一行，
+		# 该载入的载入、该展开的展开（跟没开菜单时点它一模一样，也和 VS Code 一致）。
+		# 这里什么都别做，多做一步反而变成"点一下触发两次"。
+		return
+
+	# 左键在上面就 return 了，所以这里只可能是右键：关掉旧菜单，**就着这一下**
+	# 把新菜单弹出来 —— 一次右键既关旧的又开新的，这才是"丝滑"。
+	# call_deferred 不要顺手改成同步调用：这次 window_input 是菜单**正在处理这一轮输入**
+	# 的过程中发出来的，同步 popup 会被这一轮的收尾搅掉，延后到帧末才稳（这一版实测 44 条断言全过）。
+	# 另外更正一个曾经写在这里的说法：引擎**不会**自己把这个菜单关掉，
+	# 早先日志里那句 popup_hide 是本函数上面自己的 hide() 发的，见 README §7.16。
+	_open_item_menu_at.call_deferred(vp_pos)
 
 func _build_item_menu() -> void:
 	file_item_menu.clear()
@@ -297,6 +371,7 @@ func _build_item_menu() -> void:
 	# 放最上面是跟着资源管理器的习惯。
 	if _menu_is_dir:
 		file_item_menu.add_item("新建文件", MenuId.NEW_FILE)
+		file_item_menu.add_item("新建文件夹", MenuId.NEW_FOLDER)
 		file_item_menu.add_separator()
 	# 「用默认程序打开」只对"看得见但本编辑器打不开"的文件才有意义：
 	# 目录用「在文件管理器中打开」就够了，可编辑的文件本来就单击即开。
@@ -315,6 +390,8 @@ func _on_menu_id_pressed(id: int) -> void:
 	match id:
 		MenuId.NEW_FILE:
 			_prompt_new_file()
+		MenuId.NEW_FOLDER:
+			_prompt_new_folder()
 		MenuId.OPEN_WITH_DEFAULT:
 			var err := OS.shell_open(_menu_path)
 			if err != OK:
@@ -335,10 +412,14 @@ func _on_menu_id_pressed(id: int) -> void:
 
 # ---------------- 新建文件 ----------------
 
+# 右键菜单进来的：目标是右键的那个目录
 func _prompt_new_file() -> void:
+	_prompt_new_file_in(_menu_path)
+
+func _prompt_new_file_in(dir: String) -> void:
 	# 目标目录在这里就定下来。弹框期间用户还能右键别的条目、把 _menu_path 改掉，
 	# 等确认时再读就不是当初右键的那个目录了。
-	_new_file_dir = _menu_path
+	_new_file_dir = dir
 	var default_name := _default_new_file_name(_new_file_dir)
 	_new_file_edit.text = default_name
 	# 弹框里显示目录名而不是完整路径 —— 就是用户刚右键的那个，够认了
@@ -386,6 +467,88 @@ func _on_new_file_confirmed() -> void:
 	# 上一个还开着的文件，然后 Ctrl+S 就把它覆盖了。
 	_select_tree_item_for_path(new_path)
 
+# ---------------- 新建文件夹 ----------------
+
+# 右键菜单进来的：目标是右键的那个目录
+func _prompt_new_folder() -> void:
+	_prompt_new_folder_in(_menu_path)
+
+func _prompt_new_folder_in(dir: String) -> void:
+	_new_folder_dir = dir
+	_new_folder_edit.text = _default_new_folder_name(_new_folder_dir)
+	_new_folder_dialog.dialog_text = "在「%s」里新建文件夹：" % _new_folder_dir.get_file()
+	_new_folder_dialog.popup_centered()
+	_new_folder_edit.grab_focus()
+	# 文件夹名没有扩展名，_select_base_name_in 里的 get_basename() 会原样返回整个名字，
+	# 于是全选 —— 正是想要的，直接打字就整体替换。
+	_select_base_name_in(_new_folder_edit)
+
+# 和 _default_new_file_name 同一套逻辑，只是没有扩展名
+func _default_new_folder_name(dir: String) -> String:
+	const BASE := "新建文件夹"
+	var candidate := BASE
+	var i := 2
+	while FileAccess.file_exists(dir.path_join(candidate)) or \
+		  DirAccess.dir_exists_absolute(dir.path_join(candidate)):
+		candidate = "%s (%d)" % [BASE, i]
+		i += 1
+		if i > 999:
+			break
+	return candidate
+
+func _on_new_folder_confirmed() -> void:
+	var dir := _new_folder_dir
+	var name := _new_folder_edit.text.strip_edges()
+
+	var reason := _validate_name_in_dir(dir, name)
+	if reason != "":
+		OS.alert(reason)
+		return
+
+	var new_path := dir.path_join(name)
+	# make_dir_absolute 只建一层，父目录必须已经在 —— 这里正合适：父目录就是用户
+	# 刚点的那个目录，一定存在。不走 DirAccess.make_dir_recursive_absolute，
+	# 那会把名字里带 / 的路径整个建出来（校验已经挡了 /，但少一层依赖更稳）。
+	var err := DirAccess.make_dir_absolute(new_path)
+	if err != OK:
+		OS.alert("新建文件夹失败：" + error_string(err))
+		return
+
+	refresh_file_tree()
+	# 选中新建的文件夹（顺便逐级展开它的祖先链），让用户看得见建出来的东西。
+	# 这里不用管展开状态：_select_tree_item_for_path 已经屏蔽了"选中目录 = 切换展开"，
+	# 新目录保持默认的展开态。
+	_select_tree_item_for_path(new_path)
+
+# ---------------- 文件树头部的新建按钮 ----------------
+
+func _setup_explorer_buttons() -> void:
+	new_file_button.pressed.connect(_on_new_file_button_pressed)
+	new_folder_button.pressed.connect(_on_new_folder_button_pressed)
+	_update_new_buttons()
+
+# 头部按钮的目标目录 = **当前打开的这个文件夹**（root_dir），不看树里的选中项。
+# 这套按钮的语义是"往我现在打开的文件夹里放东西"，跟位置无关 —— 选中谁都不该改变它，
+# 否则"我明明开着 A 目录，东西却跑进选中的子目录里了"。
+# 想放进某个子目录就走那个子目录的右键菜单（右键 → 新建文件 / 新建文件夹）：
+# 那里有明确的"对着谁操作"的上下文，比这里靠选中项猜要可靠。
+func _new_target_dir() -> String:
+	return root_dir
+
+# 一个目录都没打开的时候把两个按钮禁掉。
+# 这不只是"灰着好看"：那种状态下 root_dir 是空串，path_join 出来是个**相对路径**，
+# 新建会落到进程的工作目录里去 —— 用户根本不知道文件建到哪儿了。
+func _update_new_buttons() -> void:
+	var can := root_dir != "" and DirAccess.dir_exists_absolute(root_dir)
+	new_file_button.disabled = not can
+	new_folder_button.disabled = not can
+
+func _on_new_file_button_pressed() -> void:
+	_prompt_new_file_in(_new_target_dir())
+
+func _on_new_folder_button_pressed() -> void:
+	_prompt_new_folder_in(_new_target_dir())
+
 # ---------------- 重命名 ----------------
 
 func _prompt_rename() -> void:
@@ -416,9 +579,14 @@ func _select_base_name_in(edit: LineEdit) -> void:
 func _validate_new_name(old_path: String, new_name: String) -> String:
 	return _validate_name_in_dir(old_path.get_base_dir(), new_name)
 
-# 校验 new_name 能不能落在 dir 这个目录里。重命名和新建文件共用同一套规则
-# （空名 / 非法字符 / 撞名），拆出来是为了两边不会各自长歪。
+# 校验 new_name 能不能落在 dir 这个目录里。重命名 / 新建文件 / 新建文件夹
+# 共用同一套规则（目标目录 / 空名 / 非法字符 / 撞名），拆出来是为了三边不会各自长歪。
 func _validate_name_in_dir(dir: String, new_name: String) -> String:
+	if dir == "":
+		# 兜底：没有目标目录时 path_join 出来是个相对路径，写入会落到进程的工作目录，
+		# 用户根本找不到自己刚建的东西。正常流程走不到这儿（按钮会禁用、菜单也不会弹），
+		# 但这条错误值得在这里挡一次，毕竟代价是"文件消失在一个没人知道的地方"。
+		return "没有可用的目标目录"
 	if new_name == "":
 		return "名称不能为空"
 	if new_name.contains("/") or new_name.contains("\\") or \
@@ -552,6 +720,10 @@ func refresh_file_tree() -> void:
 	# 换根目录时旧路径在新树里找不到，恢复自然是空操作。
 	var collapsed := _collect_collapsed_paths()
 
+	# 每一条能改变"有没有目录"的路径最后都会走到这里（换根、刷新、_setup_file_tree），
+	# 所以按钮的可用状态在这里统一更新，不用逐个调用点去接。
+	_update_new_buttons()
+
 	file_tree.clear()
 	var root := file_tree.create_item()
 
@@ -684,6 +856,10 @@ func _on_file_tree_item_selected() -> void:
 		return
 
 	if _item_is_dir(item):
+		# 程序化选中不算"用户点了这个目录"。这一条挡的是 select() 顺带发出来的那次信号：
+		# 重命名目录 / 新建文件夹都会选中目标，用户没点它，就不该动它的展开状态。
+		if _suppress_dir_toggle:
+			return
 		item.collapsed = not item.collapsed   # 目录：展开 / 折叠
 		# 记账：这一轮点击已经切过这个目录了。双击的第二下靠它去重，
 		# 不然会再切一次、两次正好抵消。见 _on_file_tree_item_activated。
@@ -779,7 +955,12 @@ func _select_tree_item_for_path(path: String) -> void:
 	while ancestor != null and ancestor != file_tree.get_root():
 		ancestor.collapsed = false
 		ancestor = ancestor.get_parent()
+	# select() 会**同步**发 item_selected。如果选中的正是一个目录，那边会把它"展开/折叠"切一下，
+	# 于是重命名成了"把目录收起来"、新建文件夹成了"建出来就是折叠的"。
+	# 这两句必须紧贴着 select()：中间不能有 await，也不能提前 return。
+	_suppress_dir_toggle = true
 	item.select(0)
+	_suppress_dir_toggle = false
 
 func _find_tree_item(parent: TreeItem, path: String) -> TreeItem:
 	if parent == null:
