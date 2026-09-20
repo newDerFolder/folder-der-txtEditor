@@ -155,6 +155,7 @@ hide_root = true
 
 [node name="SC" type="ScrollContainer" parent="VBC/SpC" unique_id=1534484378]
 layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="TextEdit" type="TextEdit" parent="VBC/SpC/SC" unique_id=1640316979]

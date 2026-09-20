@@ -1,6 +1,7 @@
 extends Control
 
-# 侧边栏只列这些扩展名的文件
+# 这些扩展名是**可编辑**的。注意它不再用来过滤文件列表 ——
+# 不支持编辑的文件（Word / PPT / 图片……）同样会列在树里，只是图标不同、点击不载入。
 const TEXT_EXTENSIONS := [
 	"txt", "md", "json", "csv", "log", "ini", "cfg", "yaml", "yml", "xml",
 	"gd", "tscn", "tres", "html", "css", "js", "py", "sh", "bat",
@@ -15,6 +16,8 @@ const ICON_SIZE := 15
 
 const ICON_DIR_PATH := "res://asset/icon/folder.png"
 const ICON_FILE_PATH := "res://asset/icon/folderTxt.png"
+# 不支持编辑的文件的图标
+const ICON_UNSUPPORTED_PATH := "res://asset/icon/UnsupportedEditIcon.png"
 
 # 两张源图尺寸差很多（folder.png 是 32x32，folderTxt.png 是 400x400），直接塞给 Tree
 # 会按原始尺寸绘制，400x400 那张能把整行撑爆。Tree 的 icon_size 主题常量在 4.7 里
@@ -22,6 +25,7 @@ const ICON_FILE_PATH := "res://asset/icon/folderTxt.png"
 # 比绘制期缩放更清晰，大图小图都精确落在这个尺寸上。
 var _icon_dir: Texture2D
 var _icon_file: Texture2D
+var _icon_unsupported: Texture2D
 
 var current_file_path: String = ""
 var root_dir: String = ""
@@ -41,6 +45,7 @@ var root_dir: String = ""
 
 # 右键菜单项 id。用枚举而不是裸数字，加/删菜单项时不用回来数顺序。
 enum MenuId {
+	OPEN_WITH_DEFAULT,      # 用系统默认程序打开，只对不支持编辑的文件出现
 	OPEN_IN_FILE_MANAGER,
 	RENAME,
 	DELETE,
@@ -54,6 +59,13 @@ var _menu_is_dir: bool = false
 # 重命名对话框里的输入框，代码创建 —— AcceptDialog 会把子节点收进自己的内容区，
 # 手写 tscn 布局容易对不上
 var _rename_edit: LineEdit
+
+# 双击不支持编辑的文件时的"强制按文本打开"提醒框。
+# 同样在代码里建：main.tscn 里这排 AcceptDialog 的节点都带 unique_id，
+# 手写 tscn 容易把那个 id 写错或写重，交给 Godot 自己保存场景时落盘更安全。
+var _open_as_text_dialog: ConfirmationDialog
+# 提醒框确认后要打开的那个文件
+var _pending_open_path: String = ""
 
 var font_size=20
 
@@ -70,6 +82,11 @@ func _ready():
 			continue          # 侧边栏浏览的是真实文件系统，虚拟路径不认
 		if not FileAccess.file_exists(a):
 			continue          # 编辑器里运行时混进来的非文件参数
+		# 和侧边栏同一条规矩：不支持编辑的类型不往编辑器里载。
+		# 「打开方式」里把本编辑器设成默认程序时也会走到这里，
+		# 真载进来就是二进制乱码，再一保存就把原文件覆盖了。
+		if not _is_editable_file(a):
+			continue
 		open_and_show(a)
 		break             # 只认第一个，避免被后面的参数覆盖
 
@@ -236,6 +253,12 @@ func _on_file_tree_gui_input(event: InputEvent) -> void:
 
 func _build_item_menu() -> void:
 	file_item_menu.clear()
+	# 「用默认程序打开」只对"看得见但本编辑器打不开"的文件才有意义：
+	# 目录用「在文件管理器中打开」就够了，可编辑的文件本来就单击即开。
+	# 菜单项 id 走枚举，所以在这里按条件增删不会影响别的项。
+	if not _menu_is_dir and not _is_editable_file(_menu_path):
+		file_item_menu.add_item("用默认程序打开", MenuId.OPEN_WITH_DEFAULT)
+		file_item_menu.add_separator()
 	file_item_menu.add_item("在文件管理器中打开", MenuId.OPEN_IN_FILE_MANAGER)
 	file_item_menu.add_separator()
 	file_item_menu.add_item("重命名", MenuId.RENAME)
@@ -246,6 +269,10 @@ func _build_item_menu() -> void:
 
 func _on_menu_id_pressed(id: int) -> void:
 	match id:
+		MenuId.OPEN_WITH_DEFAULT:
+			var err := OS.shell_open(_menu_path)
+			if err != OK:
+				OS.alert("打开失败：" + error_string(err))
 		MenuId.OPEN_IN_FILE_MANAGER:
 			# 目录直接进去，文件在父目录里选中它
 			var err := OS.shell_show_in_file_manager(_menu_path, _menu_is_dir)
@@ -357,6 +384,7 @@ func _on_delete_confirmed() -> void:
 func _make_icon(path: String) -> Texture2D:
 	var tex := load(path) as Texture2D
 	if tex == null:
+		push_warning("图标加载失败：" + path)   # 缺图标时条目会变成没图标的空行，别静默吞掉
 		return null
 	var img := tex.get_image()
 	if img == null:
@@ -367,6 +395,7 @@ func _make_icon(path: String) -> Texture2D:
 func _setup_file_tree() -> void:
 	_icon_dir = _make_icon(ICON_DIR_PATH)
 	_icon_file = _make_icon(ICON_FILE_PATH)
+	_icon_unsupported = _make_icon(ICON_UNSUPPORTED_PATH)
 
 	file_tree.hide_root = true
 	# 注意：不要开 allow_reselect。它会让 Tree 在重选同一项时重复发 item_selected，
@@ -374,6 +403,19 @@ func _setup_file_tree() -> void:
 	# 每帧振荡，同步处理时直接段错误崩溃。
 	file_tree.allow_reselect = false
 	file_tree.item_selected.connect(_on_file_tree_item_selected)
+	# 双击 / 选中后回车
+	file_tree.item_activated.connect(_on_file_tree_item_activated)
+
+	_open_as_text_dialog = ConfirmationDialog.new()
+	_open_as_text_dialog.title = "按文本打开"
+	_open_as_text_dialog.ok_button_text = "仍要打开"
+	_open_as_text_dialog.cancel_button_text = "取消"
+	# 文案有三行，默认尺寸会挤成一团
+	_open_as_text_dialog.min_size = Vector2i(560, 200)
+	_open_as_text_dialog.confirmed.connect(_on_open_as_text_confirmed)
+	# 取消时把待办清掉，免得那个变量留着一个已经作废的目标
+	_open_as_text_dialog.canceled.connect(func(): _pending_open_path = "")
+	add_child(_open_as_text_dialog)
 	# 右键也选中条目，给个高亮反馈
 	file_tree.allow_rmb_select = true
 	# 用 gui_input 而不是 Tree 的 item_mouse_selected 拿右键：
@@ -467,7 +509,9 @@ func _populate_dir(parent: TreeItem, dir_path: String, depth: int) -> void:
 			if dir.current_is_dir():
 				if not entry.begins_with(".") and not SKIP_DIRS.has(entry):
 					sub_dirs.append(entry)
-			elif _is_text_file(entry):
+			else:
+				# 不再按扩展名过滤：打不开的文件也要列出来，用不同的图标区分。
+				# 这样目录里到底有什么一眼能看全，右键的重命名 / 删除也能直接作用在它们身上。
 				files.append(entry)
 		entry = dir.get_next()
 	dir.list_dir_end()
@@ -489,11 +533,15 @@ func _populate_dir(parent: TreeItem, dir_path: String, depth: int) -> void:
 		var file_path := dir_path.path_join(n)
 		var file_item := file_tree.create_item(parent)
 		file_item.set_text(0, n)
-		file_item.set_icon(0, _icon_file)
+		file_item.set_icon(0, _icon_file if _is_editable_file(n) else _icon_unsupported)
 		file_item.set_metadata(0, {"path": file_path, "dir": false})
 
-func _is_text_file(file_name: String) -> bool:
-	return TEXT_EXTENSIONS.has(file_name.get_extension().to_lower())
+# 这个文件能不能在本编辑器里编辑。传文件名或完整路径都行（get_extension 只看最后一段）。
+# 没有扩展名的文件（README、Makefile、LICENSE……）这里也算"不可编辑"：
+# 判断不出类型时，宁可少编辑一个文本文件（用户能改名成 .txt 绕过），
+# 也不要赌一把把二进制的乱码灌进编辑器、还可能顺着 Ctrl+S 覆盖回原文件。
+func _is_editable_file(path: String) -> bool:
+	return TEXT_EXTENSIONS.has(path.get_extension().to_lower())
 
 func _name_less(a: String, b: String) -> bool:
 	return a.naturalnocasecmp_to(b) < 0
@@ -534,11 +582,65 @@ func _on_file_tree_item_selected() -> void:
 	if path == "":
 		return                                # 占位条目，没有对应文件
 
+	# 不支持编辑的类型（Word / PPT / 图片……）：单击只选中高亮，什么都不打开。
+	# 不能让单击就载进来 —— 读进来是二进制乱码，而 current_file_path 会被指过去，
+	# 接着按一下 Ctrl+S 就把原文件覆盖成乱码了，这是真会丢数据的。
+	# 想看内容：双击按文本打开（会先弹个提醒，见 _on_file_tree_item_activated），
+	# 或者右键「用默认程序打开」交给 Word / PPT 本尊。
+	if not _is_editable_file(path):
+		return
+
 	# 已经是当前文件就别重复加载。
 	# 这一条同时也是 _select_tree_item_for_path 选中条目的递归刹车。
 	if path == current_file_path:
 		return
-	open_and_show(path)                       # 文件：单击直接载入编辑器
+	open_and_show(path)                       # 可编辑的文件：单击直接载入编辑器
+
+# 双击条目（或选中后按回车）。
+func _on_file_tree_item_activated() -> void:
+	var item := file_tree.get_selected()
+	if item == null:
+		return
+
+	# 目录：这里什么都不做。双击的第一下已经发过 item_selected、把展开状态切过一次了，
+	# 再切一次正好抵消，用户会看到"双击文件夹没反应"。
+	if _item_is_dir(item):
+		return
+
+	var path := _item_path(item)
+	if path == "":
+		return                                # "未指定目录" 占位条目
+
+	# 已经在编辑器里就不重读。读盘会把没保存的改动直接冲掉 ——
+	# 顺手双击一下当前文件就丢字，那是比"没反应"糟得多的结果。
+	if path == current_file_path:
+		return
+
+	# 白名单里的正常打开。
+	if _is_editable_file(path):
+		open_and_show(path)
+		return
+
+	# 不在白名单里 = "强制按文本打开"，先提醒一句再动手。这个入口主要给两种情况用：
+	#   1) .toml / .env / Dockerfile / README 这类没进白名单、但本来就是文本的文件
+	#   2) 真想看看 .docx / .pptx 里面到底有什么
+	# 提醒是必要的，因为第 2 种情况下读进来是一堆乱码，而 current_file_path
+	# 已经指过去了 —— 此时按 Ctrl+S 会拿编辑器里的内容覆盖掉原文件，不可逆。
+	_pending_open_path = path
+	_open_as_text_dialog.dialog_text = (
+		"「%s」不在可编辑类型列表里，按文本打开多半是乱码。\n\n"
+		+ "如果它本来就是文本文件（比如 .toml、.env），确认即可。\n"
+		+ "如果不是，看完别保存 —— Ctrl+S 会用编辑器里的内容覆盖原文件。"
+	) % path.get_file()
+	_open_as_text_dialog.popup_centered()
+
+# 提醒框点了「仍要打开」
+func _on_open_as_text_confirmed() -> void:
+	if _pending_open_path == "":
+		return
+	var path := _pending_open_path
+	_pending_open_path = ""     # 先清再打开：open_and_show 会发 item_selected，别让它重入
+	open_and_show(path)
 
 # 在树里定位并选中某个文件，同时逐级展开它的祖先目录
 func _select_tree_item_for_path(path: String) -> void:
