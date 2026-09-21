@@ -191,6 +191,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 wrap_mode = 1
+autowrap_mode = 1
 minimap_draw = true
 syntax_highlighter = ExtResource("4_pmkfb")
 highlight_all_occurrences = true
