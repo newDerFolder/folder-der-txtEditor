@@ -5,9 +5,13 @@
 - 引擎：**Godot 4.7**（`GL Compatibility` 渲染后端）
 - 语言：纯 GDScript，没有 C#
 - 平台：Windows（`export_presets.cfg` 只有 Windows Desktop 一项）
-- 体量：业务代码就是 `page/main.tscn` + `page/main.gd`（约 1335 行，其中不小一部分是解释性注释）。
-  另有一个框架 addon `addons/der_framework` 注册了 4 个 autoload，本应用用到其中两个：
-  顶部提示 `DMessageManager`，以及持久化收藏夹的 `DSaveManager`（见第 3 节、§7.17）
+- 体量：业务代码就是 `page/main.tscn`（346 行）+ `page/main.gd`（3017 行，其中不小一部分是
+  解释性注释）。另有 `scene/Previewer/` 下三个纯逻辑脚本：两个转换器
+  （`TextToBbcode.gd` / `MarkdownToBbcode.gd`）加一个阅读主题色板 `PreviewTheme.gd`
+  —— 它们不碰节点也不读文件，所以能不起界面直接拿断言验（见第 7 节）。
+  另有一个框架 addon `addons/der_framework` 注册了 4 个 autoload，本应用用到其中三个：
+  顶部提示 `DMessageManager`、持久化收藏夹的 `DSaveManager`（§7.17）、
+  持久化阅读偏好的 `DSettingsManager`（§7.20 ⑫）
 
 ---
 
@@ -276,6 +280,52 @@ timeout -k 5 90 "$GODOT" \
    按第 4 条真的往输入管线里灌按键（那样才连信号一起验了）。
    好消息是这条语义在**应用代码**里是有用的：`open_and_show()` 读文件那次
    不会触发重排，不需要额外的抑制标志。详见 §7.20 ⑥。
+19. **`DSettingsManager` 的路径重定向不了，所以设置文件只能"备份 + 还原"。**
+   `DSettingsManager.SETTINGS_PATH` 是 `const user://der_settings.tres`（不像
+   `DSaveManager.save_path` 那样是个 `@export`），第 17 条那套在这里**用不了**。
+   而阅读设置的持久化用例**会真的写那个文件** —— 不处理的话跑一次 harness 就把用户真实的
+   阅读偏好（以及音频/画面/语言）改成测试值。做法是 `_run()` 头尾无条件各跑一次
+   `_snapshot_settings_file()` / `_restore_settings_file()`：文件存在就存字节、跑完写回并
+   **断言逐字节相同**；不存在就记住"本来没有"，跑完删掉测试残留。
+   这是本项目测试里**唯一一处能造成真实数据损坏**的地方。
+20. **harness 是主循环脚本，它在 autoload 注册之前就被编译了。**
+   `--script` 跑的那个 `extends SceneTree` 里**裸写 `DSettingsManager` 会
+   `Compile Error: Identifier not found`**；而 `main.gd` 是之后才 `load()` 的，它里面裸写
+   完全没事（`--check-only` 报的那条 `DMessageManager` 也是同一个原因，是**假故障**）。
+   取法：`root.get_node_or_null("DSettingsManager")`。
+   这个差别很容易被误判成"autoload 没配好"，实际上 `project.godot` 里配着。
+   同一个原因，**新建的脚本也不要裸写 `class_name`** —— 那取的是上次编辑器扫描的全局类表，
+   在 `--script` 下可能是空的，用 `load()` / `preload()`（见 `_tmp_verify.gd` 文件头）。
+21. **`Unexpected NUL character` 警告来自 harness 自己代码里的 `char(0)`，不是项目坏了。**
+   症状：harness 输出里冒出若干条
+
+   ```
+   Unicode parsing error, some characters were replaced with � (U+FFFD): Unexpected NUL character
+   ```
+
+   **而且是打在脚本任何输出之前**，看着活像引擎/项目加载出问题。实测（六轮隔离探针）：
+
+   - 空 `--script`、`--headless --quit` → **0 条**；
+   - 只写 `var a := "x" + char(0) + "y"` 的脚本 → **2 条**；
+   - 两个 `char(0)` → **4 条**。**每个含 `char(0)` 的常量表达式产生 2 条**；
+   - `char(12)`（U+000C，不是 NUL）→ **0 条**，所以这是 **NUL 专属**的，不是"控制字符"。
+
+   机制是 GDScript 对含 `char(0)` 的字符串表达式做**编译期常量折叠**，折叠出来的常量里带 NUL
+   过一遍 UTF-8 解码 → 报错。因为发生在**编译期**，所以排在 `_init()` 任何语句之前，
+   和"哪一行触发的"完全对不上号，非常容易往引擎/项目文件上找。
+   （`_tmp_verify.gd` 里那两条是**故意**的 —— 第 259 行那段在测"转换器会不会把控制字符漏进输出串"。）
+
+   **先自查再往项目上找**：全项目扫一遍 NUL 字节，只该命中二进制（`.png` `.ctex` `.scn`
+   `.res` `.cache` `.translation` `.bin`）：
+
+   ```bash
+   find . -type f -not -path './.git/*' -print0 | xargs -0 grep -lPa '\x00'
+   ```
+
+   ⚠️ **别用 `grep -c $'\x00'` 或 `grep -c '\x00'`**：那个模式会**塌成空串**，
+   于是**每个文件的每一行都算命中**（实测 `page/main.gd` "命中" 3010 行 = 全文行数，
+   连没动过的 `MarkdownToBbcode.gd` 也"命中"）。这是个**假阳性**，
+   照它去查会得到"整个项目全是 NUL"的荒谬结论。要 `-P` 才是真的按字节匹配。
 
 ---
 
@@ -380,6 +430,7 @@ timeout -k 5 90 "$GODOT" \
 | **视图切换** | `_setup_view_buttons()` `_set_view()` `_fav_view` | 在 Explorer / 收藏两块之间切，顺带换标题、藏头部三个按钮、同步两个视图图标按钮的按下态 |
 | **程序化选中** | `_select_tree_item_for_path()` `_materialize_path()` `_find_child_item()` + `_suppress_dir_toggle` | 在树里定位并选中一条，顺带展开祖先链。**它会让 `item_selected` 发出来**，那一下的副作用是这条链路的设计核心，见 7.14。懒加载下定位不能按完整路径找，得从根一层层往下走（`_materialize_path()`），见 §7.19 |
 | **预览面板**（文件末尾那一整段） | `_setup_preview()` `_resolve_preview_mode()` `_effective_preview_mode()` `_should_show_preview_rail()` `_update_preview()` `_render_preview()` `_set_preview_rail_visible()` `_apply_preview_font_size()` + 几个事件处理器 | 右侧按扩展名给阅读视图。**两个判模式的函数是分层的，别合并**：`_effective_preview_mode()` 管"渲染成什么"，`_should_show_preview_rail()` 管"栏在不在"——它们对"没打开文件"和"打开了不可预览的文件"给出**不同**答案，理由见 §7.20 ③ |
+| **预览翻页**（夹在预览面板里） | `_walk_pages()` `_ensure_pages()` `_page_index_for()` `_invalidate_pages()` `_queue_page_refresh()` `_refresh_page_bar()` `_goto_page()` `_turn_page()` `_apply_preview_paged()` `_on_preview_rtl_gui_input()` `_resolve_pending_turn()` | 把自由滚动切成一次一屏。**`_page_index` 是权威页码**（末页页首超滚动上限会被引擎夹掉，反推会往回跳）；分页表**惰性重算 + 只置脏不每帧算**；输入全走 `preview_rtl.gui_input`，链接护栏必须"延后一步再决定"。全在 §7.20 ⑬ |
 
 ---
 
@@ -532,6 +583,35 @@ OpenDir、Ctrl+O 打开别处的文件、双击收藏里不在当前根下的目
 - **工具栏那颗「Preview」按钮是开关，不是"打开预览"**：按一下收起、再按一下放回来，按钮的 `button_pressed` 就是那个意图。它**只在本来就有预览的文件上有效**；开着 `.py` 时按它没有任何变化——那种文件唯一正确的状态就是收起来。
 - **「更改预览器」按钮手动指定模式**，菜单三项：自动（按扩展名）/ 小说预览 / Markdown 预览。手动选择**是粘性的**（换文件不重置，换到同类文件时立刻生效），但**越不过"非 txt/md 一律收起"这条线**：给 `.py` 手动选 Markdown 也不会把栏叫出来，理由见 §7.20 ③。
 - **「设置字号」按钮弹九档字号**（12 14 16 18 20 22 24 28 32，默认 16），当前档位带勾。改字号会同时铺满**五个**主题项并重算行距，见 §7.20 ①。
+- **「目录」按钮开关章节目录**。目录是转换器**同一次转换免费带出来的**（它本来就在逐行过），
+  不扫第二遍源文本。层级靠 `level` 嵌套：`卷/部/篇/集` 是第 1 层（`第1卷 风起`），
+  `章/节/回` 是第 2 层，固定词（`序章`/`楔子`/`番外`…）算第 2 层。点一条就滚过去。
+  没章节时按钮**禁用**（右栏才 274px 宽，开一个空框纯占地方）。
+  - **列表重建有门控**：防抖每 200ms 重排一次、每次都会带出新的 `chapters`，但用户敲的是
+    正文、章节一个都没变 —— 所以只在"章节集合真的变了"时才重建 UI（`_same_chapters()`）。
+    无条件重建的话，打字时目录每 200ms 清空重填一次，选中项和展开状态全被抖掉。
+  - ⚠️ 目录树**故意开着 `allow_reselect`**，和 `FileTree`/`fav_tree` 相反。那两棵关掉是因为
+    "选中 → 折叠 → 树变了 → 又选中"会每帧振荡到崩（§7.1）；目录没有这个回路（选中只滚
+    RichTextLabel，**不回改树**），而关掉的话"滚走了再点同一章"就点不动了 —— 那恰恰是
+    目录最常用的操作。
+  - **长标题在树里一定是被裁掉的，悬停提示是唯一能读全文的地方**：右栏固定 274px，每层缩进
+    还要再吃十几个像素。单列 `Tree` 的列宽会撑满树宽，所以溢出部分**连横向滚动条都出不来**
+    ——不是"没开横滚"，是根本没有溢出。所以 `set_tooltip_text()` 里放的是**标题全文**，
+    不是段落号（只放段落号等于没有提示）。
+- **齿轮按钮弹「阅读设置」**，五项各一段（组标题 + 档位）：
+  行距 `0.75/1/1.25/1.5/2×`、首行缩进 `0/1/2/3/4` 字、阅读宽度 `全宽/180/220/260 px`、
+  阅读主题 `默认/纸白/米黄/夜间`、翻页模式 `滚动/翻页`。当前档位带勾。
+  - **五项的作用层各不相同**，分错层的症状都是"调了没反应"：行距改的是 RTL 的**主题常量**；
+    翻页模式改的是外层 `ScrollContainer` 的**滚动形式**；缩进和主题要**重跑转换器**
+    （它们影响吐出来的字符串）；阅读宽度改的是外层 `ScrollContainer` 的 min 宽。
+    所以 setter 分成两档粒度，调字号/行距/页宽/翻页**不重跑转换器**
+    （那 200ms 预算里最贵的一步）。
+  - **阅读宽度只给正文列，不改右栏宽度**：`ScrollContainer` 自己 `SHRINK_CENTER` + `custom_minimum_size.x`，
+    **一个场景文件都没改**（理由见 §7.20 ⑨）。页码条跟着同一份宽度走，窄栏时和正文列对齐。
+  - **翻页模式**（默认**关**，= 改动前的自由滚动）：鼠标滚轮、正文左右半屏点击、
+    下方页码条的 `«`/`»` 按钮都能翻。点链接不翻页。见 §7.20 ⑬。
+  - **五项 + 字号 + 手动指定的预览模式全都持久化**，落在 `user://der_settings.tres`
+    （走 `DSettingsManager`，不是存档那套）。重启后生效，见 §7.20 ⑫。
 - **打字停 200ms 后重排**（`text_changed` + 一次性 Timer）。两道闸门省 CPU：模式是 `NONE` 时**根本不起 Timer**（所以在 `.py` 里打字不会有任何排版开销），超长文件直接给「太长」提示而不是硬排。
 - **滚动位置在重排后保住**：在长文末尾打字，视图不会一路跳回顶部。
 - **没打开任何文件时右栏是空壳，但仍然是可见的、也是开得掉的** —— 这是有意的：启动时右栏凭空消失是外观回退，而且那种状态下如果按模式决定栏的去留，工具栏那颗按钮就成了死键。详见 §7.20 ③。
@@ -1037,7 +1117,7 @@ Tree 处理鼠标选择事件的过程中禁止建条目，硬来会是这样（
   给每个新建的目录条目设 `collapsed = true` 也会发这个信号 —— 不挡的话一建树就把整棵树全展开了。
 - **占位和 `collapsed = true` 的先后不能反**：先设 `collapsed` 再挂占位，挂上去时才是折着的。
 
-### 7.20 预览面板 —— 实测出来的七条
+### 7.20 预览面板 —— 实测出来的十二条
 
 #### ① 字号要铺满**五个**主题项；而且项目里没有任何字体文件
 
@@ -1063,7 +1143,10 @@ normal_font_size  bold_font_size  italics_font_size  bold_italics_font_size  mon
 `scene/Previewer/` 下面只有**一个** `MobileNovelReader.tscn`
 （`VBoxContainer → ScrollContainer → RichTextLabel`），两种模式都用它。
 原本还打算给 Markdown 单独建一个 `MarkdownPreview.tscn`，写完发现两个文件的树会**逐字节相同** ——
-两种模式的差别只在于**调哪个纯函数生成字符串**。留两个就是两份要同步的状态：
+两种模式的差别只在于**调哪个纯函数生成字符串**。
+那个文件后来确实建出来了，但一直是**只有一个 `VBoxContainer`、零子节点的空壳**，
+已于本次一并 `git rm`（它唯一还活着的地方是 `.godot/editor/editor_layout.cfg` 的
+"最近打开的场景"记录，那不算引用）。留两个就是两份要同步的状态：
 字号要应用两遍、切模式时滚动位置会在两个 RTL 之间丢。多出来的那份还会踩 §3 里
 "死的文件"的定义。
 
@@ -1172,6 +1255,177 @@ RTL 自己没有可滚的余量）。而 `rtl.text = bb` 会把滚动复位，�
 这是第一张网。第二张网是 `logs_read(source="game")`，RichTextLabel 对能识别的
 结构问题（比如闭合不配对）会推警告，跑一遍日志里必须是干净的。
 
+#### ⑧ 跳转用 `get_paragraph_offset()`，**不要**自己估算折行
+
+目录跳转的全部实现就一行：
+
+```gdscript
+sc.set_deferred("scroll_vertical", int(rtl.get_paragraph_offset(p)))
+```
+
+`get_paragraph_offset(k)` 返回第 k 段的垂直像素偏移，而且**跟随折行**：同一个文档，
+宽度 274→160 时第 3 段的偏移从 **595 变成 1094**。它还**不依赖 `fit_content`**
+（`true`/`false` 下值都是 595，实测）。
+
+三条**先用探针证伪、再也没必要走**的路：
+
+- ❌ **`scroll_to_paragraph()`**：预览的 RTL 是 `fit_content = true` + `scroll_active = false`，
+  高度正好等于内容高度、自身滚动余量为 0，在这套结构上调它是**空转**。实测把它放到
+  `scroll_active = true` + `fit_content = false` + 滚动范围已放开的情况下，`scroll_to_paragraph(3)`
+  之后 value **立刻读是 0、等 4 帧后还是 0** —— 不是"需要等帧"，是这条路根本不存在。
+- ❌ **按字体度量自己累加折行**：不需要了。顺带记一句备查：`get_theme_font("normal_font")`
+  名字是**对的**（拿到 `Open Sans SemiBold`），真要走估算也不是死路。
+- ✅ **`get_paragraph_count()` == 输出 BBCode 的行数**（一个 `\n` 一个段落），
+  所以转换器里"标题在输出串的第几行"可以直接当段落号用，不需要任何换算。
+
+⚠️ 但**仍然必须 `set_deferred`**：`text` 刚换掉时 `ScrollContainer` 的滚动上限还是旧文本的
+高度，直接写会被按旧上限夹一次。另外 Y 要在**最终宽度确定之后**读 —— 这正是它跟随折行的代价。
+
+#### ⑨ 阅读宽度：`ScrollContainer` 的 min 宽 + 居中，**零场景改动**
+
+定宽 = `size_flags_horizontal = SIZE_SHRINK_CENTER(4)` + `custom_minimum_size.x = w`。
+
+- ⚠️ **`SC` 的 `min.x` 默认只有 1**（实测 `RTL.min = (1, 5)`）。所以这两条**必须成对**设：
+  单设居中会把 `SC` 塌成 1px 宽，而且**不报错**。定宽 160 时实测
+  `SC.size.x = 160 / min.x = 160 / RTL.size.x = 152` —— 差的 8px 是竖滚动条，
+  即"页宽 180"实际给正文 ~172px。
+- **不去插节点**，两个候选方案都是**静默**坏掉：
+  - 在 `SC` 和 `RTL` **之间**插一层 → `preview_rtl.get_parent() as ScrollContainer` 会拿到
+    **null**（`as` 失败返回 null，不抛错），滚动保活当场失效，症状正是 ⑤ 那条"长文末尾
+    打字视图跳回顶部"。
+  - 在 `SC` **上面**插 `CenterContainer` / 直接改 `preview_rail.custom_minimum_size.x` →
+    min size 向上传播，和 `split_offsets` 的存/恢复（④）反复打架，窗口变窄时还会形成拉锯。
+- **档位必须是绝对像素、且 ≤ 右栏宽度（274）**：按字号推导的话，274px 的栏里绝大多数档位
+  会 clamp 到同一个值、看着像功能坏了。
+- **"名义值"和"应用值"要分开**：`custom_minimum_size.x` 会向上传播成 `preview_rail` 的 min size。
+  持久化的是**名义值** `_preview_page_width`，实际写入的是 `min(名义值, preview_split.size.x)`
+  —— 这个 clamp **不写回**名义值，否则用户把分隔条拖窄一次就把自己选的页宽永久改掉了。
+  宽度一律从 `preview_split.size.x` 派生，**不读 `preview_rail.size.x`**（那正是会被自己的
+  min 宽影响的那个值）。
+- **两条不要碰**：`preview_split.split_offsets`（那是用户拖分隔条的结果，④ 的存/恢复会整份
+  `duplicate()` 覆盖掉你写进去的）；`preview_rail.custom_minimum_size.x`（同上打架）。
+
+#### ⑩ 阅读主题：**两处真源必须同时改**（这是最容易做半截的一处）
+
+`[color=...]` 的优先级**高于** RTL 的主题项 `default_color`。而 `MarkdownToBbcode` 把 8 个颜色
+**直接拼进了输出串**（共 10 处输出行：代码块底色 `L109`、`[hr]` 的 `L122`、标题 `L132`、
+行内代码的底色+字色 `L279`、图片 alt 的灰 `L294`、链接 `L311/L364/L369`、不可点链接目标的灰
+`L366`、引用 `L585`）。加上 `TextToBbcode` 的分隔线色和 `main.gd` 里那句「文件太长」的灰，
+同一个色值散过**三份**。
+
+→ 只调 `add_theme_color_override("default_color", ...)` 的话，**上面 10 处一处都不会变**，
+只有没被 `[color]` 包住的正文会变 —— 看着像"主题只生效了一半"。
+
+解法是 `scene/Previewer/PreviewTheme.gd` 当**单一真源**，同时提供两条路：
+`apply_to(rtl, theme)`（节点主题项）和 `retint(bb, theme)`（输出串换色）。
+
+- **`retint` 为什么安全**（这是它能成立的前提）：两个转换器的 `_escape()` 把文档内容里
+  **每一个** `[` 都换成了 `[lb]`，所以成品串里凡是 `[color=` 开头的地方，都只可能是转换器
+  自己吐出来的。截取的是**完整标签形式**（`[color=#7aa2f7]`），**不替换裸色值** ——
+  否则代码块里恰好写着这个 hex 就会被误染。
+- **`DEFAULT` 主题必须原样返回**（`retint` 直接 early-return）：这样"默认外观逐字节等于
+  改动前"是**结构性保证**，不是靠人肉核对色值有没有写错。
+- ⚠️ **`DEFAULT` 的 `sel` / `sel_text` 必须是 `Color` 而不是 hex**。内建值是
+  `selection_color = (0.1, 0.1, 1.0, 0.8)`、`font_selected_color = (0, 0, 0, 0)`，
+  而 `0.1` 写成 hex 只能得到 `#1a`（26/255 ≈ 0.10196 ≠ 0.1）—— 于是"默认主题零变化"
+  会**差在最后一位**，而 `Color == Color` 是逐浮点比较。第一版就是照"更合理"的直觉写成
+  `#4a5a7a` / `#ffffff` 的，那等于**把默认外观改了**。harness 里钉着三条逐值比较。
+- ⚠️ **`apply_to()` 对 `DEFAULT` 也要显式跑一遍**，不能 early-return：用户从"夜间"切回
+  "默认"时，必须把上一套覆盖**清掉**（尤其是背景 `StyleBox`，留着会盖住底图）。
+- **主题够不到的地方**：目录树和工具栏按钮不是 `RichTextLabel`，吃不到 `default_color`，
+  本次有意保持原样。
+
+#### ⑪ `PopupMenu` 的 `add_separator()` 给的是**字面量 -1**，不是自动 id
+
+`add_item(label, -1)` 会把 -1 换算成"当前条目数"，但 **`add_separator()` 不会** ——
+它的 id 就是 `-1`（实测三个分隔线全是 `-1`，多个分隔线会互相"重复 id"）。
+
+所以菜单 id 的编解码（`READING_ID_*` 那组常量 + `_reading_is_current()` +
+`_on_preview_reading_id_pressed()`）里：
+
+- **组标题**用保留 id `READING_ID_HEADER = -2`，**不能图省事用 `add_item(label)` 的自动 id**
+  —— 自动 id 从 **0** 开始，正好撞上"行距"段的 0 号档；而组标题是 disabled 的，
+  **撞了既不报错也点不动**，只会在打勾时拿标题的 id 去索引档位表。
+  取 -2 而不是 -1：-1 是 `add_item` 的"请自动分配"哨兵值。
+- **分隔线**在打勾时要 `is_item_separator(i)` 跳过；处理器里靠 `if id < 0: return` 兜住。
+- **`_sync_preview_menu_checks()` 必须三个菜单各认各的**。它原来是"mode 菜单 early-return，
+  其余一律当字号菜单"——加第三个菜单后，阅读菜单的 id `0..4` 会被拿去索引
+  `PREVIEW_FONT_SIZES` **打错勾**，id `≥9`（比如行距档 12）直接**下标越界报错**。
+  最后一个分支才是字号，并且带上下界检查。
+
+#### ⑫ 阅读偏好走 `DSettingsManager`，**加载是 deferred 的，必须跟着 deferred**
+
+五项可调 + 字号 + 手动预览模式**全部持久化**，落在 `user://der_settings.tres`
+（`DSettingsManager`）。这个选择本身是重要的：阅读偏好语义上是**设置**不是**存档进度**，
+走存档会刷 `last_modified_timestamp`、污染收藏夹的"最近修改"排序。
+
+**这一个时序坑值得单独记**：`der_settings.gd::_ready()` 里是
+`call_deferred("_send_ready_message")` → `call_deferred("_load_or_create")`，
+**`_setup_preview()` 里同步读 `DSettingsManager.settings` 必然拿到 `null`**
+（read 侧还没跑，deferred 队列要等主场景 `_ready()` 跑完才 flush）。
+所以读侧也 `call_deferred("_load_reading_settings")` —— 塞进同一条 FIFO，
+排在 `_load_or_create` 后面，顺序由引擎保证。
+
+两个**不能靠信号兜底**的理由：
+
+- `_load_or_create()` 在**首启动**（文件不存在）时会走 `save_settings()` 并发
+  `settings_changed`；**文件已存在时则不发**。发不发取决于文件在不在，不能拿它当加载完成的通知。
+- 读侧的最后一步**必须**是"完整重渲染"（`_apply_preview_font_size()` + `_update_preview()`）。
+  少了这步，持久化的值**永远不会生效** —— 不是"第一帧用默认值"那么轻，是**永久**。
+
+**反面教材在 addon 自己身上**：`DSettings/scene/control/language_item_button.gd` 的
+`_pressed()` 只改字段、**没调 `save_settings()`** —— 语言选择其实不落盘。别照抄那个形状。
+
+#### ⑬ 翻页模式：`SCROLL_MODE_SHOW_NEVER` + 按页写 `scroll_vertical`
+
+翻页是**纯表现层**的：同一份 BBCode，换个滚法。所以 `scene/Previewer/*.gd` 一行没改，
+两个 `.tscn` 一行没改，页码条是在 `_setup_preview()` 里用代码建的
+（`MobileNovelReader` 的子节点，**不是** `SC` 和 `RTL` 之间 —— 那是 §7.20 ⑤ 的红线）。
+
+- **`SHOW_NEVER` 是"能滚但不画滚条"**（`SCROLL_MODE_DISABLED` 才是关掉滚动，不能用）。
+  `scroll_vertical` 仍然可写可读，所以现有的两处滚动保活逻辑原样有效。
+  `get_v_scroll_bar()` 返回的是引擎内部节点，**只能藏不能删**（文档明说 free 它会崩），
+  所以一律走 `vertical_scroll_mode`，绝不 `queue_free()` 那个 bar。
+- ⚠️ **切换会改折行，分页表必须在切换之后重算**：藏掉滚条后 `RTL` 宽出**正好 8px**
+  （滚条原来的位置），同一份文档的内容高从 356000 掉到 323669。**在切换前算的表是废的。**
+  这条也是"别被单一读数骗到"的现场：`AUTO` 和 `SHOW_NEVER` 的
+  `get_v_scroll_bar().max_value` 不一样，看着像 `SHOW_NEVER` 收缩了滚动范围，
+  其实那个差值**正好就是重新折行的高度差** —— 两个配置的 RTL 宽度本来就差 8px，
+  不是同一个基准。要归因就得把两个变量分离开测。
+- **页首对齐到段落起点，宁可重复一段、绝不切断一行**。纯按屏高切会把一行字拦腰切开，
+  页首半行 —— 那不是翻页，是跳着滚。走查用一次前进式扫描，O(段落数)：
+  `cand > cur` 是显式护栏（严格递增），单段高于整页时落到 `cur + h` 兜底仍然前进一屏，
+  回退量 ≤ 一个段高而前进量 ≥ `h - 段高`，所以**一定收敛**。
+  别"优化"成 `next = cur + h`，那就又切半行了。
+  实测 12 万字符（`PREVIEW_MAX_CHARS` 上限）→ 5958 段落 / 1192 页，
+  走查本身 **10.19ms**（同一份文档排版要 1092ms）。
+- **`_page_index` 是权威页码，绝不从 `scroll_vertical` 反推**：**末页页首
+  861490 > 可滚上限 861057**，引擎会把 `scroll_vertical` 夹回上限，
+  反推会算出 `index - 1`，症状是"在第 16 页按下一页，页码跳到 15"。
+  只在表重建时用 `_page_index_for(scroll_vertical)` 认一次。
+- **分页表惰性重算，且只置脏不每帧算**：`SC.resized` 只 `_invalidate_pages()` +
+  `_queue_page_refresh()`。拖分隔条会连发 `resized`，每帧跑一遍全篇走查会把拖动拖卡。
+- **输入全走 `preview_rtl.gui_input`**：默认（滚动）模式下处理器直接 early-return
+  且**不 accept**，滚轮照旧落到外层 `SC`，行为一个字不变。翻页模式下
+  `accept_event()` 能挡住祖先 `SC`（已实测：不 accept 时外层 0 → 108，accept 后 0 → 0），
+  前提 `rtl.mouse_filter == STOP`。8px 位移阈值用来分"点击"和"拖拽选字"。
+- ⚠️ **链接护栏只能"先记下、延后一步再决定"**，两个看起来更自然的写法都是死的：
+  - `RichTextLabel.is_meta_hovered()` **在 4.7 里不存在**；把 meta 方法全列出来，
+    没有任何一个能回答"鼠标下的字是不是链接"；
+  - 鼠标**精确落在链接上**时 `meta_hover_started/ended` **一次都不发**。
+  实测事件次序是 `["gui_input:press", "gui_input:release", "meta_clicked", "deferred"]`
+  —— `meta_clicked` 排在 **`gui_input` 之后**（不是直觉上的之前）。所以"`meta_clicked`
+  置标志、点击处理器读标志"这种写法护栏**永远失效**，而且**不报错**：
+  症状是"点链接既开浏览器又翻一页"。
+  实际做法是抬手时不立刻翻，把方向登记下来 `call_deferred` 出去，
+  到那一步再看 `_preview_meta_clicked_frame`（由**已有的**外链处理器置位）。
+  `deferred` 排在 `meta_clicked` 之后，所以这一步一定看得到本次点击的结果。
+- ⚠️ **`◀`/`▶` 不能用，用 `«`/`»`**：项目里一个字体文件都没有（走内建 Open Sans），
+  逐字实测 `◀ ▶ ▲ ▼ ← → ▏ ★ ※` **全部无字形**（连兜底字体也没有）→ 一定渲染成豆腐块；
+  有的是 `› « »`。`◀` 是最自然的写法，也是**一定会坏**的写法 ——
+  项目没有字体文件这件事，只有真去问 `font.has_char()` 才会发现。
+- 页码条和工具栏一样**不是 `RichTextLabel`**，吃不到 `default_color`（同 §9 那条）。
+
 ---
 
 ## 8. 已知问题
@@ -1260,13 +1514,23 @@ harness 里第 8 / 12 节就钉着这两个数（`_tmp_verify.gd`，见 §2）�
 - 设置窗口（UI 建好了，按钮是隐藏的）
 - 标签页 / 多文件同时打开——**同时只有一个文件**
 - 预览相关的这几个（都是有意砍的，不是漏了）：
-  - txt 的**分章 / 目录 / 阅读进度**——小说预览只做阅读排版，不做解析
+  - txt 的**阅读进度**（"读到第几章 / 百分之多少"）——**章节识别和目录已经做了**（见 §6），
+    进度条没做。当初这里是"不做解析、不分章"一句写死的，那条取舍已经**推翻**了
+  - 章节识别的**完全准确**：只用启发式（`第` + 数字 + `章节回卷部篇集` + 一张固定词表）。
+    已知会误判整行恰好以章节形式开头的正文句子（`第一章就写完了`），**这是有意的**——
+    收紧边界检查会把 `第一章初见` 这类网文常态标题成片漏掉，见 `TextToBbcode.chapter_of()` 的注释
+  - 目录里的**搜索 / 跳到指定章 / 拖拽排序**，目录也不显示章号（就是原文那行）
   - Markdown 的 **setext 标题**（`===` 下划线那种）、**表格**、**HTML 块**、**脚注**、**引用式链接**（`[x][1]` + `[1]: url`）
   - **嵌套列表**：`- a` / `  - b` 用 `[indent]` + 换字形表达层级，**不用嵌套 `[ul]`**（RichTextLabel 的列表块不能可靠嵌套）。也因此 `* * *` 这类整行分隔符在 Markdown 里必须是"整行 3 个以上同类标记"才认，否则和列表项咬
   - **`.markdown` 扩展名不认**（只认 `.md`；要加就是 `PREVIEW_EXT_MODE` 里一个键）
-  - 字号和手动指定的预览模式**不持久化**，重启回到默认（16px / 自动）
+  - 阅读主题**只作用于正文区域**：目录树、工具栏按钮和翻页模式的页码条都不是
+    `RichTextLabel`，吃不到 `default_color`，本次有意让它们保持原样（别当 bug 报）
   - **代码块没有真正的等宽字体**：项目里一个字体文件都没有，`[code]` 换不出等宽，代码块只能靠**底色 + 颜色**和正文区分（§7.20 ①）
   - 预览与编辑器之间**没有双向定位**（点预览里的链接能开浏览器，但不开编辑器里的对应行）
+  - **翻页模式没有键盘快捷键**（PageUp/PageDown、左右方向键一律不做）。理由是
+    `_input()`（`main.gd:381`）跑在 GUI 分发**之前**、且拿不到焦点信息，
+    要在那里接翻页键就必须和编辑区 `TextEdit` 抢按键（TextEdit 独占焦点）。
+    不做，这条冲突就不存在 —— 翻页只有鼠标滚轮、左右半屏点击、`«`/`»` 三个入口。
 
 ---
 

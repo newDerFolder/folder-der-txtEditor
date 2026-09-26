@@ -27,14 +27,24 @@ extends RefCounted
 # 项目里**一个字体文件都没有**（resource/folder.tres 只有一行 TextEdit 字号），
 # 而 [code] 换出等宽字体是需要自定义字体的（Godot 文档明说，没有就退回普通字体）。
 # 所以代码的"像代码"只能靠底色和颜色做出来 —— 这些常量就是干这个的。
-const CODE_BG := "#1e2124"          # 代码块整块的底色
-const INLINE_CODE_BG := "#26292d"   # 行内代码的底色
-const INLINE_CODE_FG := "#e0a878"   # 行内代码的字色
-const LINK_FG := "#7aa2f7"
-const QUOTE_FG := "#9aa0a6"
-const HEADING_FG := "#e8eaed"
-const DIM_FG := "#6b7075"           # "点不动"的东西：不可点的链接目标、其它说明
-const HR_COLOR := "#3a3d3f"
+#
+# **色值本身不在这里写**，全部来自 PreviewTheme（单一真源）。下面这些只是"默认主题下的
+# 取色"的别名 —— 留着它们是为了让这 10 处拼串保持可读，而不是让色值散成两份。
+#
+# **换肤也不是在这里做的**：转换器照旧只吐默认色，最后由 PreviewTheme.retint() 把成品串
+# 里的标签形式一次性换成主题色。这样色板就不必穿透传给下面 6 个子函数
+# （base_font_size 就是这么传的，已经传到了 8 个点，再加一个参数是 16 处改动）。
+# 为什么"换成品串"是安全的、而不是"把裸色值 replace 一遍"，见 PreviewTheme 的文件头。
+const Palette := preload("res://scene/Previewer/PreviewTheme.gd")
+
+const CODE_BG := Palette.C_CODE_BG          # 代码块整块的底色
+const INLINE_CODE_BG := Palette.C_INLINE_CODE_BG   # 行内代码的底色
+const INLINE_CODE_FG := Palette.C_INLINE_CODE_FG   # 行内代码的字色
+const LINK_FG := Palette.C_LINK
+const QUOTE_FG := Palette.C_QUOTE
+const HEADING_FG := Palette.C_HEADING
+const DIM_FG := Palette.C_DIM    # "点不动"的东西：不可点的链接目标、其它说明
+const HR_COLOR := Palette.C_HR
 
 ## 标题字号相对正文的**增量**（h1..h6）。
 ##
@@ -51,13 +61,29 @@ const CODE_INDENT_OPEN := "[indent]"
 const CODE_INDENT_CLOSE := "[/indent]"
 
 
-## 把 Markdown 转成 BBCode。
+## 把 Markdown 转成 BBCode。**保留旧签名**（harness 里大量按老形式调用）。
+static func to_bbcode(src: String, base_font_size: int = 16) -> String:
+	return String(to_bbcode_with_toc(src, base_font_size)["bbcode"])
+
+
+## 同上，外加一份章节目录（标题在**输出**里的段落号）。
 ##
 ## base_font_size 是正文的基准字号（像素），只用来推标题字号 —— 正文本身的字号不在这里设，
 ## 由 main.gd 的主题覆盖统一管。
-static func to_bbcode(src: String, base_font_size: int = 16) -> String:
+##
+## theme 只做一件收尾工作：把成品串里的标签形式换成主题色（PreviewTheme.retint）。
+## 默认主题下是**原样返回**，所以"不传 theme = 和改动前逐字节一样"是结构性的。
+##
+## `paragraph` 是给 main.gd 跳转用的：`rtl.get_paragraph_offset(paragraph)` 直接给像素 Y。
+## **md 这边不能像 txt 那样拿"输出数组的下标"当段落号** —— md 的块本身就是多行的
+## （列表、代码块、引用），块之间还用空行分隔，所以段落号必须**数换行**得到。
+## 下面那个前缀和就是在不切子串的前提下把这件事做成一遍 O(n)（切子串会是 O(n·标题数)）。
+static func to_bbcode_with_toc(src: String, base_font_size: int = 16,
+		theme: int = Palette.Scheme.DEFAULT) -> Dictionary:
 	var lines := _normalize(src).split("\n")
 	var out: Array[String] = []
+	## 标题暂存：[输出块下标, 标题, 层级, 源行号]。块下标要等 out 攒完才能换算成段落号。
+	var marks: Array[Dictionary] = []
 	var i := 0
 	while i < lines.size():
 		var line: String = lines[i]
@@ -91,7 +117,9 @@ static func to_bbcode(src: String, base_font_size: int = 16) -> String:
 		# ③ 水平线。**排在列表前面**，而且要求整行只有标记符 ——
 		#    这两条合起来才是 `- item`（列表）和 `---`（分割线）分得开的原因。
 		if _is_hr(line):
-			out.append("[hr height=1 width=100%% align=l color=%s]" % HR_COLOR)
+			# 用 Palette.HR_ATTR 拼而不是把整条标签写在这里：retint 的替换目标就是它，
+			# 两处各写一份的话，改了属性顺序就会**静默**换不了色（匹配不上，不报错）。
+			out.append(Palette.HR_ATTR + HR_COLOR + "]")
 			i += 1
 			continue
 
@@ -102,6 +130,8 @@ static func to_bbcode(src: String, base_font_size: int = 16) -> String:
 			var size: int = base_font_size + HEADING_STEP[level - 1]
 			out.append("[font_size=%d][b][color=%s]%s[/color][/b][/font_size]" % [
 				size, HEADING_FG, _inline(text, base_font_size)])
+			marks.append({"block": out.size() - 1, "title": _plain_title(text),
+				"level": level, "source_line": i + 1})
 			i += 1
 			continue
 
@@ -172,7 +202,37 @@ static func to_bbcode(src: String, base_font_size: int = 16) -> String:
 
 	# 块与块之间空一行。块内部的换行（列表条目之间、代码块内部）都是单个 \n，
 	# 所以这个 "\n\n" 就是段落间距。
-	return "\n\n".join(out)
+	var joined := "\n\n".join(out)
+
+	# 块下标 → 段落号。前缀和一遍算完：`block_nl[k]` = 第 k 块**开头之前**的换行总数。
+	# 递推里那个 +2 就是块之间那两个 \n。RichTextLabel 是"一个 \n 一个段落"，
+	# 所以这个计数就是 get_paragraph_offset() 要的段落号（已实测，见 README §7.20）。
+	var block_nl: Array[int] = []
+	var acc := 0
+	for k in out.size():
+		block_nl.append(acc)
+		acc += out[k].count("\n") + 2
+	var chapters: Array[Dictionary] = []
+	for m in marks:
+		chapters.append({
+			"title": m["title"],
+			"paragraph": block_nl[int(m["block"])],
+			"level": m["level"],
+			"source_line": m["source_line"],
+		})
+	# retint 只换标签里的色值，**不动换行**，所以上面算出来的段落号在换肤后依然成立。
+	return {"bbcode": Palette.retint(joined, theme), "chapters": chapters}
+
+
+## 目录里显示的标题文本：把行内标记符去掉。
+##
+## 目录项和正文里那个标题是**两处渲染**：正文那份走 `_inline()`（真的加粗变色），
+## 目录这份只显示文字。不去掉标记符的话，目录里会赫然写着 `**第一章**`。
+##
+## 只删标记字符，不做链接解析之类的 —— 目录只是用来认路的，够用就行，
+## 不值得为它再引一套和 `_inline()` 平行的解析逻辑（两套逻辑就会有两套 bug）。
+static func _plain_title(s: String) -> String:
+	return s.replace("`", "").replace("*", "").replace("_", "").replace("~", "").strip_edges()
 
 
 # ---------------- 行内扫描器 ----------------

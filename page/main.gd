@@ -62,8 +62,74 @@ const PREVIEW_FONT_ITEMS := [
 const PREVIEW_LINE_SEP_NOVEL := 0.55
 const PREVIEW_LINE_SEP_MARKDOWN := 0.30
 
-# 超长文件那句提示的灰度，和 MarkdownToBbcode.DIM_FG 同一个色值
-const PREVIEW_DIM_COLOR := "#6b7075"
+# 阅读主题（配色）。**用 preload 而不是裸 class_name**：`--script` 模式的 harness
+# 拿的是上一次编辑器扫描的全局类表，新建的脚本不在里面，裸写会报 "Identifier not found"
+# 这种看着像真错的假故障（_tmp_verify 文件头记着这条）。preload 在解析期直接从文件走。
+const Palette := preload("res://scene/Previewer/PreviewTheme.gd")
+
+# 超长文件那句提示的灰度以前是这里的一个字面量，现在统一走色板（"dim" 键）——
+# 它和 MarkdownToBbcode 的 DIM_FG、TextToBbcode 的 BREAK_COLOR 本来就是同一个色值，
+# 散成三份的话换主题必然漏两处。
+
+# ---------------- 阅读设置的可选档位 ----------------
+#
+# **默认值全部等于改动前的行为**，这既让留存 harness 的断言不成片变红，
+# 也让"默认外观和以前一样"变成一条能验的事。
+
+# 行距因数：作用在 PREVIEW_LINE_SEP_* 那两个**比例**之上，不是替换它们。
+# 直接写死行距像素的话，字号一调大行距相对就变窄了（越调越挤），所以基数必须留给字号。
+# 默认 1.0 = 和以前逐字节一样。
+const PREVIEW_LINE_SCALES := [0.75, 1.0, 1.25, 1.5, 2.0]
+const PREVIEW_LINE_SCALE_DEFAULT := 1.0
+
+# 首行缩进字宽（单位：全角字）。0 = 不缩进。
+const PREVIEW_INDENTS := [0, 1, 2, 3, 4]
+const PREVIEW_INDENT_DEFAULT := 2
+
+# 阅读宽度（页宽），单位像素。**必须是绝对值、且全部 ≤ 右栏宽度（274）**：
+# 按字号推导的话，274px 的栏里绝大多数档位会 clamp 成同一个值，看着像功能坏了（实测见 README）。
+# 0 = 全宽（= 改动前的行为）。
+const PREVIEW_PAGE_WIDTHS := [0, 180, 220, 260]
+const PREVIEW_PAGE_WIDTH_DEFAULT := 0
+
+# 翻页模式。false = 自由滚动（**默认 = 改动前的行为**），true = 一次一屏。
+#
+# 菜单里的两项。下标 0 = 滚动、1 = 翻页 —— READING_ID_PAGED 那段就是按下标拼 id 的，
+# 所以这里的顺序**就是**菜单顺序，和 PREVIEW_PAGE_WIDTHS 同一套约定。
+const PREVIEW_PAGED_LABELS: Array[String] = ["滚动", "翻页"]
+const PREVIEW_PAGED_DEFAULT := false
+
+# 点击 / 拖拽的分界（像素）。鼠标按下到抬起的位移小于它才算"点击翻页"，
+# 超过就是**选字**，交给 RichTextLabel 自己的 selection_enabled 处理，不翻页。
+# 取 8 是手抖和真拖拽之间很宽的一段：正常点击的位移是 0～2px，而选字至少要拖十几个像素。
+const PREVIEW_CLICK_SLOP := 8.0
+
+# 分页走查的迭代上限。**这是防死循环的兜底，不是正常路径**。
+# 段落数与页数都不该超过字符数，所以拿 PREVIEW_MAX_CHARS 当上界刚刚好
+# （实测 12 万字符 = 5958 段 / 1192 页，留了两个数量级的余量）。
+# 真撞上这个数说明"每页只前进几个像素"，那时候宁可少几页，也不能把主线程钉死。
+const PREVIEW_PAGE_WALK_GUARD := PREVIEW_MAX_CHARS
+
+# 阅读设置菜单的 id **分段**。用区间而不是四个独立的连续编号，好处是一眼能判出
+# "这个 id 属于哪一项"，判当前档位（_reading_is_current）也不用认识四个菜单对象。
+# 段内偏移就是档位表的下标。
+#
+# ⚠️ 四段**必须互不重叠**：串台不会崩，只会静默打错勾 / 打好几个勾 —— 比崩难查得多。
+# 和字号菜单（`_preview_font_menu`）的 0..8 撞了没关系：那是**另一个** PopupMenu，
+# 两个菜单的 id 各自独立，永远不会同时进同一个同步函数。
+const READING_ID_LINE_SCALE := 0     # 0..4  → PREVIEW_LINE_SCALES
+const READING_ID_INDENT := 10        # 10..14 → PREVIEW_INDENTS
+const READING_ID_PAGE_WIDTH := 20    # 20..23 → PREVIEW_PAGE_WIDTHS
+const READING_ID_SCHEME := 30        # 30..33 → PreviewTheme.NAMES
+const READING_ID_PAGED := 40         # 40..41 → PREVIEW_PAGED_LABELS
+
+# 组标题（"行距"、"首行缩进"…）用的保留 id。
+#
+# ⚠️ **不能图省事用 add_item(label) 的自动 id**：自动 id 是从 **0** 开始的，
+# 会正好撞上"行距"那段的 0 号档。而组标题是 disabled 的，撞了**既不报错也点不动**，
+# 只会在打勾时拿标题的 id 去索引档位表 —— 静默用错表。
+# 取 -2 而不是 -1：-1 是 add_item 的"请自动分配"哨兵值，不是真的能用的 id。
+const READING_ID_HEADER := -2
 
 var current_file_path: String = ""
 var root_dir: String = ""
@@ -137,6 +203,65 @@ var _preview_enabled := true
 var _preview_mode_override := PreviewOverride.AUTO
 
 var _preview_font_size := PREVIEW_FONT_DEFAULT
+
+# ---------------- 阅读设置（五项可调，全部持久化） ----------------
+#
+# 注意这五个的**作用层各不相同**，改一个会牵动不同的东西：
+#   * 行距 / 主题 —— 只动 RichTextLabel 的主题项，**不必重跑转换器**
+#   * 页宽      —— 只动 ScrollContainer 的尺寸，也不必重跑
+#   * 翻页模式  —— 只动 ScrollContainer 的滚动形式和分页表，同样不必重跑
+#   * 缩进字宽  —— 落在**输出串**里，必须重跑转换器
+# setter 就是按这条分两类的。分错层的症状是"调了没反应"或"每次都白排一遍 12 万字"。
+var _preview_line_scale := PREVIEW_LINE_SCALE_DEFAULT
+var _preview_indent := PREVIEW_INDENT_DEFAULT
+## 页宽的**名义值**（用户选的那个）。实际写给 ScrollContainer 的是它 clamp 到可用宽度后的结果，
+## 且 clamp 结果**不写回这里** —— 否则用户把分隔条拖窄一次，他选的页宽就被永久改掉了。
+var _preview_page_width := PREVIEW_PAGE_WIDTH_DEFAULT
+var _preview_scheme := Palette.Scheme.DEFAULT
+var _preview_paged := PREVIEW_PAGED_DEFAULT
+
+# ---------------- 翻页模式的运行态 ----------------
+#
+# ⚠️ **`_page_index` 是权威页码，绝不从 `scroll_vertical` 反推**。实测（README §7.20 ⑬）：
+# 12 万字符的文档末页页首是 861490，而可滚上限只有 861057 —— 引擎会把 `scroll_vertical`
+# 夹回上限，于是"反推"在最后一页会算出 倒数第二页，页码**自己往回跳**。
+# 反推只在**表刚重建**时做一次（_ensure_pages），用来接住"重排前读到哪儿了"。
+
+## 页码条。`null` = 还没建（_setup_preview 里建，所以不是 @onready）。
+var _page_bar: HBoxContainer
+var _page_label: Label
+var _page_prev_button: Button
+var _page_next_button: Button
+
+## 每一页的页首像素 Y。**空 = 作废**（_invalidate_pages）。
+var _page_tops := PackedInt32Array()
+## 算 _page_tops 时用的视口高。和 _page_tops 配对校验：高度变了表就得重算。
+var _page_height := 0
+var _page_index := 0
+## 延迟合并用的标志，见 _queue_page_refresh()。
+var _page_refresh_queued := false
+## 重排后要回到的页号，-1 = 没有待办。见 _render_preview 尾部。
+var _keep_page_pending := -1
+
+## 左键按下的落点，用来分"点击"和"拖选"。
+var _click_pos := Vector2.ZERO
+var _click_arming := false
+## 待执行的翻页方向，0 = 没有。见 _resolve_pending_turn()。
+var _pending_turn := 0
+## 这一帧里 meta_clicked 来过没有。**必须延迟一步才读得到**，见 _resolve_pending_turn()。
+var _preview_meta_clicked_frame := false
+
+# 章节目录。**普通成员变量，不能 @onready** —— @onready 在 _ready() 之前求值，
+# 而这两个节点是 _setup_preview() 里现建的，那时候还不存在。
+var _toc_tree: Tree
+var _toc_toggle_button: Button
+var _reading_button: Button
+var _reading_menu: PopupMenu
+## 当前渲染出的章节。**存在的意义是"比一比，没变就别重建目录"**：
+## 防抖路径每 200ms 走一遍渲染，而打字时章节根本不会变，不比较就会每 200ms
+## 重建一次列表（看得见的抖动 + 白烧 CPU）。目录**数据**是同一次转换免费带出来的，
+## 只有**建 UI 列表**这一步是有成本的。
+var _chapters: Array = []
 
 # 藏右栏之前存下的 split_offsets。**必须先存再藏**，见 _set_preview_rail_visible()。
 var _preview_saved_split_offsets := PackedInt32Array()
@@ -1693,8 +1818,33 @@ func _set_view(fav: bool) -> void:
 # 右栏按扩展名自动给出阅读视图：.txt → 小说排版，.md → Markdown 渲染，其余收起整栏。
 # 两条转换链都是**纯函数**（scene/Previewer/ 下的两个脚本），这里只管接线、节流和字号。
 #
-# 这里**没有**一条路径会写文件：预览的源永远是 text_edit.text（编辑器里的当前文本），
-# 不是磁盘上那个文件。所以"没保存就切走了"这类事和预览无关，预览也不需要碰磁盘。
+# 阅读可调项有**五项，作用层各不相同** —— 分错层的症状都是"调了没反应"：
+#
+# | 可调项 | 作用层 | 走哪个函数 |
+# |---|---|---|
+# | 行距   | RTL 的**主题常量** `line_separation` | `_apply_preview_font_size()` |
+# | 首行缩进字宽 | **转换器**（拼进输出串的全角空格） | `_update_preview()` |
+# | 阅读宽度 | **布局**：外层 ScrollContainer 的 min 宽 + 居中 | `_apply_preview_page_width()` |
+# | 翻页模式 | **布局**：ScrollContainer 的滚动形式 + 分页表 | `_apply_preview_paged()` |
+# | 阅读主题 | **两层都要**：RTL 主题项 **+** 输出串换色 | `_apply_preview_scheme()` + `_update_preview()` |
+#
+# 只有**缩进字宽**那一行落在输出串上（要重跑转换器）；其余四项都只改布局/主题项，
+# 切一下是 O(1) 到 O(段落数)，**一次转换都不重跑**。
+#
+# 主题那一行最容易做半截：`[color=...]` 的优先级高于主题项 `default_color`，而两个转换器
+# 把 8 个颜色**直接拼进了输出串**。只调主题项的话，代码块底色 / 链接 / 引用 / 标题
+# 一处都不会变。见 scene/Previewer/PreviewTheme.gd 的头注释。
+#
+# 章节目录是转换器**同一次转换免费带出来的**（它本来就在逐行过），不扫第二遍；
+# 跳转靠 `RTL.get_paragraph_offset()`，一行 —— 见 `_jump_to_paragraph()`。
+#
+# 预览的源永远是 text_edit.text（编辑器里的当前文本），**不是磁盘上那个文件** ——
+# 所以"没保存就切走了"这类事和预览无关，预览也不碰被预览的那个文件。
+#
+# ⚠️ 但**别再把这句话读成"预览不写任何文件"**（以前这里就是这么写的，加了持久化之后
+# 它变成了假话）：五项可调**会落盘**，走的是 `user://der_settings.tres`
+# （`_save_reading_settings()`）。写的是**设置**，不是用户正在编辑的文档 ——
+# 这个区别是承重的：harness 里的持久化用例必须先把那个文件备份下来再还回去。
 
 ## 接线。可见 UI 已经全部在 main.tscn 里了，这里只连行为 ——
 ## 和侧边栏那排按钮同一套界线（README §7.9）：长什么样归场景，做什么事归代码。
@@ -1725,6 +1875,39 @@ func _setup_preview() -> void:
 		_preview_font_menu.id_pressed.connect(_on_preview_font_id_pressed)
 		add_child(_preview_font_menu)
 
+	if _reading_menu == null:
+		# 五项设置合成**一个平铺**菜单（分组标题 + 选项），不用子菜单。
+		#
+		# 为什么平铺：PopupMenu 的子菜单要靠**节点名**去找子 PopupMenu
+		# （add_submenu_item(label, name)），名字对不上就是"子菜单弹出来是空的"这种
+		# 不报错的坏法。平铺只用 add_item/add_separator/set_item_disabled，
+		# 全是本项目已经在用的 API（_setup_item_menu）。
+		#
+		# 为什么合成一个菜单而不是五个按钮：右栏固定 274px，放不下五个文字按钮；
+		# 五个图标按钮（约 180px）会把这行挤到换行，而 HFlowContainer 每换一行就
+		# **永久**吃掉约 30px 阅读高度。一个齿轮 + 一个菜单是唯一不损失高度的形状。
+		_reading_menu = PopupMenu.new()
+		_reading_menu.name = "PreviewReadingMenu"
+		_add_reading_section(_reading_menu, "行距",
+			["0.75×", "1×", "1.25×", "1.5×", "2×"], READING_ID_LINE_SCALE)
+		_reading_menu.add_separator()
+		_add_reading_section(_reading_menu, "首行缩进",
+			["不缩进", "1 字", "2 字", "3 字", "4 字"], READING_ID_INDENT)
+		_reading_menu.add_separator()
+		_add_reading_section(_reading_menu, "阅读宽度",
+			["全宽", "180 px", "220 px", "260 px"], READING_ID_PAGE_WIDTH)
+		_reading_menu.add_separator()
+		_add_reading_section(_reading_menu, "阅读主题", Palette.NAMES, READING_ID_SCHEME)
+		# 翻页模式放在**最后**：它是这份菜单里唯一"换一种读法"的项，不是排版细节，
+		# 排在四组排版参数之后比夹在中间更好找。
+		#
+		# **不进工具栏**：工具栏 4 个控件已占 232/274px，再加一个文字按钮（~48px）必然触发
+		# HFlowContainer 换行，而每换一行就**永久**吃掉约 30px 阅读高度。
+		_reading_menu.add_separator()
+		_add_reading_section(_reading_menu, "翻页模式", PREVIEW_PAGED_LABELS, READING_ID_PAGED)
+		_reading_menu.id_pressed.connect(_on_preview_reading_id_pressed)
+		add_child(_reading_menu)
+
 	# 防抖 Timer。回调必须是 **IDLE**：project.godot 把物理帧设成了 1Hz
 	# （physics/common/physics_ticks_per_second，README §7.16 记着这个坑），
 	# 接物理帧的话 0.2 秒的防抖会变成 1 秒一刷，打字时预览明显跟不上。
@@ -1736,15 +1919,130 @@ func _setup_preview() -> void:
 	_preview_timer.timeout.connect(_on_preview_debounce_timeout)
 	add_child(_preview_timer)
 
+	# 工具栏那两个新按钮**在代码里建**，和上面几个菜单同一套理由（PopupMenu 隐形、
+	# 没有"长什么样"要落盘，而手写 tscn 加节点要自己编 unique_id，编错就是静默坏）。
+	# 父节点从 preview_mode_button 反推，不写死路径。
+	var toolbar := preview_mode_button.get_parent()
+
+	_reading_button = Button.new()
+	_reading_button.name = "PreviewReadingButton"
+	_reading_button.tooltip_text = "阅读设置（行距 / 缩进 / 阅读宽度 / 主题）"
+	_reading_button.icon = preload("res://asset/icon/settingIcon.png")
+	# ⚠️ **expand_icon 必须写**。settingIcon.png 是 400×400，且 .import 里没设
+	# size_limit（不缩放）—— 不写 expand_icon 的话按钮的 min 宽直接是 400px，
+	# 比整条右栏（274）还宽，会把 split_offsets 顶开。README §7.20 记着这条。
+	_reading_button.expand_icon = true
+	_reading_button.custom_minimum_size = Vector2(32, 31)
+	_reading_button.pressed.connect(_on_preview_reading_button_pressed)
+	toolbar.add_child(_reading_button)
+
+	_toc_toggle_button = Button.new()
+	_toc_toggle_button.name = "PreviewTocButton"
+	_toc_toggle_button.text = "目录"
+	_toc_toggle_button.tooltip_text = "显示 / 隐藏章节目录"
+	_toc_toggle_button.toggle_mode = true
+	_toc_toggle_button.pressed.connect(_on_preview_toc_toggle_pressed)
+	toolbar.add_child(_toc_toggle_button)
+
+	# 目录树。做法照 _setup_fav_tree()（hide_root + 代码建 + 接信号）。
+	#
+	# 位置：**插在工具栏和阅读器之间**。preview_rail 的子节点顺序是
+	# 0 = 标题 PanelContainer、1 = 工具栏 HFlowContainer、2 = MobileNovelReader，
+	# 所以插到 index 2 就落在它们中间。
+	_toc_tree = Tree.new()
+	_toc_tree.name = "PreviewTocTree"
+	_toc_tree.hide_root = true
+	_toc_tree.columns = 1
+	_toc_tree.allow_rmb_select = false
+	# ⚠️ 这里**开** allow_reselect，和 FileTree / fav_tree 的做法相反，是有意的：
+	# 它们关掉是因为"选中 → 折叠 → 树变了 → 又选中"会每帧振荡到崩（README §7.1）。
+	# 目录没有这个回路 —— 选中只滚一下 RichTextLabel 外层，**不回改树**。
+	# 而关掉的话，"滚走了再点同一章"就点不动了，那恰恰是目录最常用的操作。
+	_toc_tree.allow_reselect = true
+	# 只占它自己那 160px，**不抢**阅读区的高度（不 EXPAND）：目录是拿来认路的，
+	# 不该在右栏里和正文对半分。
+	_toc_tree.size_flags_vertical = Control.SIZE_FILL
+	_toc_tree.custom_minimum_size = Vector2(0, 160)
+	_toc_tree.visible = false
+	_toc_tree.item_selected.connect(_on_toc_item_selected)
+	preview_rail.add_child(_toc_tree)
+	preview_rail.move_child(_toc_tree, 2)
+
+	# 页码条：翻页模式下才出现的一行（上一页 / 页码 / 下一页）。
+	#
+	# **挂在 MobileNovelReader 上，不挂 preview_rail**：_toc_tree 已经用
+	# move_child(..., 2) 在挪 preview_rail 的下标，再往那儿加节点就是两个人在挪同一份
+	# 子节点顺序。MobileNovelReader 是个 VBox，今天是 0 = SC，页码条追加到 1
+	# 就正好落在"阅读区下方一行"。
+	#
+	# ⚠️ **更不能插在 SC 和 RTL 之间**：那条路径上有一句
+	# `preview_rtl.get_parent() as ScrollContainer`，插一层会**静默**拿到 null
+	# （`as` 失败不报错），滚动保活当场失效（见 _apply_preview_page_width 头注释）。
+	# 挂在 MobileNovelReader 上不在这条路径上。
+	#
+	# 不写进 tscn：和 _toc_tree / _reading_button 同一套理由（手写 tscn 要自己编
+	# unique_id，编错是静默坏；而这一行是"有没有"和"长什么样"都由模式决定的东西）。
+	var reader := preview_rtl.get_parent().get_parent()
+	_page_bar = HBoxContainer.new()
+	_page_bar.name = "PreviewPageBar"
+	_page_bar.visible = false
+
+	_page_prev_button = Button.new()
+	_page_prev_button.name = "PrevPageButton"
+	# ⚠️ 用 **«** » 而**不是** ◀ ▶。项目里一个字体文件都没有（走内建 Open Sans SemiBold），
+	# 实测 ◀(U+25C0) ▶(U+25B6) —— 连**兜底字体**里都没有字形，一定会渲染成豆腐块。
+	# «(U+00AB) »(U+00BB) 在拉丁补充区，字体覆盖度好得多，实测两个都有字形。
+	_page_prev_button.text = "«"
+	_page_prev_button.tooltip_text = "上一页"
+	_page_prev_button.pressed.connect(_on_page_prev_pressed)
+	_page_bar.add_child(_page_prev_button)
+
+	_page_label = Label.new()
+	_page_label.name = "PageLabel"
+	_page_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_page_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_page_bar.add_child(_page_label)
+
+	_page_next_button = Button.new()
+	_page_next_button.name = "NextPageButton"
+	_page_next_button.text = "»"
+	_page_next_button.tooltip_text = "下一页"
+	_page_next_button.pressed.connect(_on_page_next_pressed)
+	_page_bar.add_child(_page_next_button)
+
+	reader.add_child(_page_bar)
+
 	text_edit.text_changed.connect(_on_preview_text_changed)
 
 	# meta_clicked 是 RichTextLabel 自己的信号，不在场景里连 —— 和上面三个按钮一样，
 	# 接线归代码。
 	preview_rtl.meta_clicked.connect(_on_preview_meta_clicked)
 
+	# 翻页模式的输入**接在 RTL 上**，不是外层 SC：滚轮要从"最上层控件往上冒"的路上
+	# 被拦下来（RTL 就是鼠标下最上层那个），拦在 SC 上就晚了 —— 它自己已经处理完了。
+	preview_rtl.gui_input.connect(_on_preview_rtl_gui_input)
+
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc != null:
+		# 阅读区高度变了，每页装得下的量就变了（见 _on_preview_sc_resized）。
+		sc.resized.connect(_on_preview_sc_resized)
+
+	# 页宽要跟着分隔条走：右栏宽度变了，clamp 的结果得重算（见 _apply_preview_page_width）。
+	preview_split.resized.connect(_apply_preview_page_width)
+
 	_apply_preview_font_size()
+	_apply_preview_scheme()
+	_apply_preview_page_width()
+	_apply_preview_paged()
 	_update_preview_toggle_button()
 	_update_preview()
+
+	# 阅读设置是**延迟读**的，而且必须压在 DSettingsManager 之后：它的 _load_or_create()
+	# 走的是 call_deferred，而 autoload 的 _ready 又排在主场景之前，deferred 队列要等
+	# 主场景 _ready 跑完才 flush —— 所以这里同步读**必然拿到 null**。
+	# 两条 deferred 同在一个 FIFO 队列里，它先入队，于是"先加载、后读取"是天然成立的。
+	# （不能用 settings_changed 兜底：文件已存在时 _load_or_create() **不发**那个信号。）
+	call_deferred("_load_reading_settings")
 
 
 ## 纯函数：路径 → 自动模式。不碰节点、不读文件，只有这一条判断。
@@ -1820,6 +2118,11 @@ func _update_preview() -> void:
 		# 没有可渲染的东西，**把上一次的内容清掉**：否则"打开 a.txt 再把它删了"
 		# 会在右栏留一屏已经不属于任何文件的旧文本，看起来像预览还活着。
 		preview_rtl.text = ""
+		# 目录同理会留一屏属于**上一个文件**的章节 —— 点一下还会滚到一个空位置。
+		_set_chapters([])
+		# 页码条同理（_refresh_page_bar 见到 NONE 会自己藏掉，这里把表也作废）。
+		_invalidate_pages()
+		_refresh_page_bar()
 		preview_title.text = _mode_name(PreviewMode.NONE)
 		return
 
@@ -1833,21 +2136,44 @@ func _preview_source_text() -> String:
 	return text_edit.text
 
 
+## 重排一屏。**五项可调里只有两项从这里过**（缩进字宽、配色），另外三项不走这里：
+## 行距是 RTL 的主题常量（_apply_preview_font_size）、页宽是外层 SC 的 min 尺寸
+## （_apply_preview_page_width）、翻页模式是 SC 的滚动形式（_apply_preview_paged）
+## —— 那三项重设一次主题项/布局就行，不需要重跑转换器。
+##
+## 反过来说，**缩进和配色改了就一定得重跑这一趟**：它们影响的是转换器吐出来的字符串本身。
 func _render_preview(mode: PreviewMode) -> void:
 	var src := _preview_source_text()
 
 	if src.length() > PREVIEW_MAX_CHARS:
 		# 超长文件给一句话，不硬排。排版本身是 O(n)，几 MB 的 .txt 每敲一键重排一次
 		# 会把主线程钉住 —— 那看起来就是程序死了。宁可明确说"太长了不预览"。
+		# 这句提示**在转换器之外**、直接写进同一个 RTL，够不到色板参数，所以灰度要单独取。
 		preview_rtl.text = "[color=%s][i]文件太长（%s 字符），预览已停用。[/i][/color]" % [
-			PREVIEW_DIM_COLOR, _thousands(src.length())]
+			Palette.color(_preview_scheme, "dim"), _thousands(src.length())]
+		# 这条分支**也要清目录**：否则右栏写着"预览已停用"，左边的目录还列着章节。
+		_set_chapters([])
+		# 页码表同理会留着**上一个文件**的页数（还是按旧文本的折行算的），
+		# 翻页会跳到一个空位置。一并作废。
+		_invalidate_pages()
+		_refresh_page_bar()
 		return
 
-	var bb := TextToBbcode.to_bbcode(src)
+	# 目录是**同一次转换免费带出来的**（转换器本来就在逐行过，认出来时顺手记下下标），
+	# 所以这里不需要为了目录再扫第二遍源文本。
+	var res: Dictionary
 	if mode == PreviewMode.MARKDOWN:
 		# Markdown 要 base_font_size：标题字号是**相对正文**算出来的（+10/+7/+5…），
 		# 转换器不知道主题里字号被调成了多少，只能问我们。
-		bb = MarkdownToBbcode.to_bbcode(src, _preview_font_size)
+		res = MarkdownToBbcode.to_bbcode_with_toc(src, _preview_font_size, _preview_scheme)
+	else:
+		res = TextToBbcode.to_bbcode_with_toc(src, {
+			"indent": _preview_indent,
+			"theme": _preview_scheme,
+			# 章节标题要比正文大一点，而正文字号由这里的主题覆盖决定，转换器不知道 ——
+			# 所以由我们告诉它。0 是"别发字号标签"，这里永远不是 0。
+			"font_size": _preview_font_size,
+		})
 
 	# 滚动位置**存在外层 ScrollContainer 上**，不在 RichTextLabel 上：
 	# fit_content = true 让 RTL 正好和内容等高，它自己根本没得滚，滚动条是外层的。
@@ -1855,8 +2181,21 @@ func _render_preview(mode: PreviewMode) -> void:
 	# 会一路跳回顶部，等于没法边看边改。
 	var sc := preview_rtl.get_parent() as ScrollContainer
 	var keep: int = sc.scroll_vertical if sc != null else 0
-	preview_rtl.text = bb
-	if keep > 0 and sc != null:
+	# 翻页模式下要保的是**页号**，不是像素：页号不随折行漂移，而旧折行下的像素值
+	# 在新折行里会落到另一页的中间。表作废前先把它记下来 —— 这是**改动前**的页号。
+	var keep_page := _page_index
+	preview_rtl.text = String(res["bbcode"])
+	# 放在 text 赋值**之后**：目录里的段落号是"输出串的第几行"，和 text 是同一份东西，
+	# 中途更新会让 _rebuild_toc 去索引一个还不存在的段落号。
+	_set_chapters(res["chapters"])
+	# text 一换，折行全变，页码表里存的像素偏移就全是**旧文本**的了 —— 留着它比没有更坏
+	# （翻页会跳到错误的段落）。这一步必须在 text 赋值**之后**：之前作废的话，
+	# 走查会拿着旧文本去算。
+	_invalidate_pages()
+	if sc != null and _preview_paged:
+		_keep_page_pending = maxi(0, keep_page)
+		_queue_page_refresh()
+	elif keep > 0 and sc != null:
 		# set_deferred 而不是直接赋值：text 刚换掉时布局还没跑，ScrollContainer 的
 		# 滚动上限还是**旧的**（旧文本的高度），此刻写进去会被它按旧上限夹一次。
 		# 延到帧末，布局已经跑完，接住的就是新上限内的位置。
@@ -1898,8 +2237,367 @@ func _apply_preview_font_size() -> void:
 	# 比例随模式走：小说是密排长文要松，Markdown 块多留白多要收。
 	var ratio := PREVIEW_LINE_SEP_NOVEL if _effective_preview_mode() == PreviewMode.NOVEL \
 		else PREVIEW_LINE_SEP_MARKDOWN
+	# 用户那个"行距"档位是**乘在比例上**的因数，不是替换掉比例 ——
+	# 默认 1.0 时 ×1.0 在 IEEE754 里是精确的，所以默认值和改动前逐位相同。
 	preview_rtl.add_theme_constant_override(
-		"line_separation", int(round(_preview_font_size * ratio)))
+		"line_separation", int(round(_preview_font_size * ratio * _preview_line_scale)))
+
+
+## 把阅读主题铺上去。**必须同时管两处**（这是本次最容易做半截的地方）：
+##
+##   * `Palette.apply_to()` 管 RTL 的主题项 —— 没被 `[color]` 包住的正文、背景、选中色
+##   * 转换器那条路上 `Palette.retint()` 管**拼进输出串**的那 10 处色值
+##
+## 只做前者的话，代码块底色 / 链接 / 引用 / 标题这些**一处都不会变**，
+## 因为 `[color=...]` 的优先级高于主题项 `default_color` —— 看着像"主题只生效了一半"。
+func _apply_preview_scheme() -> void:
+	Palette.apply_to(preview_rtl, _preview_scheme)
+
+
+## 应用阅读宽度（页宽）。
+##
+## 走 **ScrollContainer 自己的 min 宽 + SIZE_SHRINK_CENTER**，场景文件一行都不用改。
+## 为什么不去插节点（这是有意的选择，两个候选方案都会**静默**坏掉）：
+##
+##   * 在 SC 和 RTL **之间**插一层 → main.gd 那句
+##     `preview_rtl.get_parent() as ScrollContainer` 会拿到 **null**（`as` 失败返回 null，
+##     不报错），滚动保活当场失效，症状正是"长文末尾打字视图一路跳回顶部"。
+##   * 在 SC **上面**插 CenterContainer / 改 preview_rail 的 min size → min size 会
+##     向上传播，和 split_offsets 的存/恢复反复打架（_set_preview_rail_visible），
+##     窗口变窄时还会和容器形成拉锯。
+##
+## 宽度从 **preview_split.size.x** 派生（不是 preview_rail.size.x —— 那正是会被自己的
+## min 宽影响的那个值），clamp 结果**不写回 `_preview_page_width`**：名义值是用户的，
+## 应用值是当下可用的，混在一起的话用户把分隔条拖窄一次就把他选的页宽永久改掉了。
+func _apply_preview_page_width() -> void:
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc == null:
+		return
+	_apply_reading_column_size(sc, _preview_page_width)
+	# 页码条（翻页模式）跟着正文列一起收，窄栏时两者**同宽对齐**。
+	# `_page_bar != null` 才做：_load_reading_settings 是 deferred 的、排在 _setup_preview
+	# 之后，但字号菜单那条路（_on_preview_font_id_pressed）也可能更早碰到它。
+	if _page_bar != null:
+		_apply_reading_column_size(_page_bar, _preview_page_width)
+
+
+## 把"阅读宽度"那套施加到一个控件上。**正文列（SC）和页码条共用这一份实现** ——
+## 两处各写一遍的话，改了其中一处就会一条宽一条窄，而且窄得**很轻微**、一眼看不出来。
+##
+## `want <= 0` = 全宽 = 改动前的行为：默认的 FILL 标志 + min 0，不做任何居中。
+##
+## 实测（README §7.20）：SC 的 min.x 默认只有 **1**，所以 SHRINK_CENTER **必须**和
+## custom_minimum_size.x 成对出现 —— 单设居中会把控件塌成 1px 宽。
+func _apply_reading_column_size(c: Control, want: int) -> void:
+	if want <= 0:
+		c.size_flags_horizontal = Control.SIZE_FILL
+		if c.custom_minimum_size.x != 0:
+			c.custom_minimum_size.x = 0
+		return
+	c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var avail := int(preview_split.size.x)
+	var applied := want if avail <= 0 else mini(want, avail)
+	# 相同就别写：这个函数接在 preview_split.resized 上，而改 min size 本身会触发重排，
+	# 无条件写就是在布局里反复推布局。
+	if c.custom_minimum_size.x != applied:
+		c.custom_minimum_size.x = applied
+
+
+## 切换滚动 / 翻页。
+##
+## **只改布局，不重跑转换器** —— 和页宽同类（见 _on_preview_reading_id_pressed 的表格）：
+## 同一份 BBCode，换个滚法而已，没有哪个字符会变。
+##
+## ⚠️ 顺序是**先切模式再作废表**：藏滚条会让 RTL 宽出 8px、正文重新折行，
+## 表必须在新的折行下重建。反过来做就会拿着旧折行的页首去翻页，落在半行上。
+func _apply_preview_paged() -> void:
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc == null:
+		return
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER if _preview_paged \
+		else ScrollContainer.SCROLL_MODE_AUTO
+	_invalidate_pages()
+	if _preview_paged:
+		# 进翻页模式时**保住阅读位置**：表重建时 _ensure_pages() 会从当前
+		# scroll_vertical 反推出页码，正好落在读者原来读到的地方。
+		_queue_page_refresh()
+	else:
+		# 回滚动模式：页码条藏起来，表也用不上了。
+		_refresh_page_bar()
+
+
+# ---------------- 翻页模式 ----------------
+#
+# 一份 BBCode，两种读法：自由滚动（默认）和一次一屏。**纯表现层** ——
+# 转换器、场景文件、`scene/Previewer/*.gd` 三处**一行都不用改**。
+#
+# 机制是 `ScrollContainer.SCROLL_MODE_SHOW_NEVER`（能滚、但滚条不画）+ 按页写
+# `scroll_vertical`。实测确认这条可行：`SCROLL_MODE_SHOW_NEVER` **不收缩滚动范围**，
+# 写进去的 `scroll_vertical` 照读回来。
+# ⚠️ 一律走 `vertical_scroll_mode`，**绝不** `hide()` / `queue_free()` 那个
+# `get_v_scroll_bar()` —— 它是引擎内部节点，官方文档明说 free 它会崩。
+#
+# ⚠️ 藏了滚条，RTL 会**宽出正好 8px**（266 → 274，原来那条竖滚条的位置），
+# 正文因此**重新折行**（实测同一份文档内容高 356000 → 323669）。
+# 所以页码表**必须在模式切完之后**重算 —— 见 _invalidate_pages()。
+
+
+## 走查全篇，得出每一页的页首像素 Y。
+#
+## 页首**对齐到段落起点**，不按 `cur + h` 硬切：硬切会把一行字拦腰截断，
+## 页首是半行 —— 那不是"翻页"，那是"跳着滚"。宁可**重复一段**，绝不切断一行。
+##
+## **为什么这样一定收敛**（别"优化"成 `cur + h`，那会重新切出半行）：
+##   * `cand > cur` 是显式护栏 → next 严格递增；
+##   * 一个段落比整页还高时 `cand == cur` → 落到 `cur + h` 兜底，仍然前进一屏；
+##   * 重复的**最多一个段落**：`offset(k-1) <= boundary`，所以回退量 ≤ 一个段高，
+##     而前进量 ≥ `h - 段高`，永远是大步前进。
+##
+## **成本（实测）**：段落数 + 页数都是线性的，12 万字符（PREVIEW_MAX_CHARS 的上限，
+## 也是本函数的最坏输入）→ 5958 段落 / 1192 页 / **10.2ms**。
+## 对比同一份文档的排版要 1092ms，所以这是个小头 —— 但它是**一次性**的，
+## 必须只挂在"缓存失效"上，绝不能进每帧路径（见 _queue_page_refresh）。
+func _walk_pages(h: int) -> PackedInt32Array:
+	var tops := PackedInt32Array()
+	if h <= 0:
+		return tops
+	var pc := preview_rtl.get_paragraph_count()
+	var total := preview_rtl.get_content_height()
+	var cur := 0
+	var k := 0                       # 还没被当作"页首候选"的第一个段落
+	var guard := 0
+	while cur + h < total and guard < PREVIEW_PAGE_WALK_GUARD:
+		guard += 1
+		tops.append(cur)
+		var boundary := cur + h
+		while k < pc and int(preview_rtl.get_paragraph_offset(k)) <= boundary:
+			k += 1
+		var next := cur + h
+		if k > 0:
+			# k-1 是"起点落在本页内"的最后一个段落 —— 它被页底切到了，
+			# 所以下一页**从它的开头重来**。
+			var cand := int(preview_rtl.get_paragraph_offset(k - 1))
+			if cand > cur:
+				next = cand
+		cur = next
+	# 收尾用 `while cur + h < total`：余下内容已经装得下，就不再回退去重复最后一段了。
+	tops.append(cur)
+	return tops
+
+
+## 像素 Y → 页码。返回**最后一个**页首 ≤ y 的页，也就是"y 落在哪一页里"。
+##
+## 线性扫描，不二分：页数是千级，而它只在**跳转 / 重排后复位**时被调用一次
+## （实测 1192 页的线性扫一遍是微秒级），不在每帧路径上。
+func _page_index_for(y: int) -> int:
+	var idx := 0
+	for i in _page_tops.size():
+		if _page_tops[i] > y:
+			break
+		idx = i
+	return idx
+
+
+## 保证 `_page_tops` 和"当前视口高"配套且有效。**这是唯一真正算分页的地方。**
+##
+## 惰性：调用方只该是"要翻页 / 要刷页码 / 要跳转"，不该是"每帧"。
+## 返回 false = 现在还量不出高度（SC 还没布局），调用方别拿空表当"只有一页"。
+func _ensure_pages() -> bool:
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc == null:
+		return false
+	var h := int(sc.size.y)
+	if h <= 0:
+		return false
+	if _page_tops.is_empty() or _page_height != h:
+		_page_height = h
+		_page_tops = _walk_pages(h)
+		# 表换了 → 当前页码按**新的**表重新定位，接住"重排前读到哪儿了"。
+		# 这是**唯一**一处从 scroll_vertical 反推，见 _page_index 的头注释。
+		_page_index = _page_index_for(int(sc.scroll_vertical))
+	return true
+
+
+## 页码表作废。**只置脏，不重算** —— 重算在 _ensure_pages()。
+##
+## 作废的时机全是"折行会变"的那些：换 text、改字号/行距/缩进/主题/页宽、
+## 切翻页模式、阅读区尺寸变化。
+func _invalidate_pages() -> void:
+	_page_tops = PackedInt32Array()
+	_page_height = 0
+
+
+## 把重算合并成"帧末一次"。
+##
+## **可重入安全**：拖动分隔条时 `resized` 会连发，不加这个标志就会往 deferred 队列里
+## 塞几百个回调，每个都跑一遍全篇走查。
+func _queue_page_refresh() -> void:
+	if _page_refresh_queued:
+		return
+	_page_refresh_queued = true
+	_refresh_page_bar_deferred.call_deferred()
+
+
+func _refresh_page_bar_deferred() -> void:
+	_page_refresh_queued = false
+	_refresh_page_bar()
+	# 重排后回到原来那一页。**保的是页号不是像素**：页号不随折行漂移，
+	# 而旧折行下的像素值在新折行里会落到另一页的中间。
+	if _keep_page_pending >= 0:
+		var p := _keep_page_pending
+		_keep_page_pending = -1
+		_goto_page(p, true)
+
+
+## 页码条的内容与可见性。**内部会 _ensure_pages()** —— 所以别在每帧路径上调它。
+func _refresh_page_bar() -> void:
+	if _page_bar == null:
+		return
+	# 只在"翻页模式 + 真的有东西可读"时出现。没有文件时右栏是**可见的空壳**
+	# （见 _should_show_preview_rail 的 ②），不加这道闸就会在空壳底下挂一条"第 1 / 1 页"。
+	if not _preview_paged or _effective_preview_mode() == PreviewMode.NONE:
+		_page_bar.visible = false
+		return
+	_page_bar.visible = true
+	if not _ensure_pages():
+		# 高度还没出来（刚切模式 / 栏刚显示）—— 下一帧再试。
+		# **只在栏真的可见时才重试**：栏藏起来时 SC 的高度恒为 0，
+		# 无条件重试会变成一个永不停止的 deferred 自旋。
+		if preview_rail.visible:
+			_queue_page_refresh()
+		return
+	var n := _page_tops.size()
+	_page_index = clampi(_page_index, 0, n - 1)
+	_page_label.text = "第 %d / %d 页" % [_page_index + 1, n]
+	# 到头了就把按钮变灰 —— 比"点了没反应"清楚。只有一页时两个都灰。
+	_page_prev_button.disabled = _page_index <= 0
+	_page_next_button.disabled = _page_index >= n - 1
+
+
+## 把当前 `_page_index` 落到滚动位置上。
+##
+## `deferred`：刚改完 text / 刚切完模式时**必须**用 —— 那一刻 SC 的滚动上限还是旧值的，
+## 直接写会被按旧上限夹一次（和 _render_preview 尾部、_jump_to_paragraph 同一个理由）。
+func _scroll_to_page(deferred: bool) -> void:
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc == null or _page_tops.is_empty():
+		return
+	if _page_index < 0 or _page_index >= _page_tops.size():
+		return
+	# ⚠️ 末页页首**可能超过可滚上限**（实测 861490 > 861057），那时引擎会夹到上限。
+	# 视觉效果正是想要的（末页把结尾顶到底），而 `_page_index` 不受影响 ——
+	# 它就是为此才当权威的。
+	var y := int(_page_tops[_page_index])
+	if deferred:
+		sc.set_deferred("scroll_vertical", y)
+	else:
+		sc.scroll_vertical = y
+	_refresh_page_bar()
+
+
+## 翻到第 i 页（越界会被夹到首/末页）。
+func _goto_page(i: int, deferred := false) -> void:
+	if not _ensure_pages():
+		return
+	_page_index = clampi(i, 0, _page_tops.size() - 1)
+	_scroll_to_page(deferred)
+
+
+## 翻一页。delta = -1 上一页 / +1 下一页。
+##
+## **到头就原地不动**：第 0 页再往回、末页再往前都是 no-op ——
+## 不能回绕（那会让"读完了"变成"跳回开头"，很吓人），也不能归零。
+func _turn_page(delta: int) -> void:
+	if not _preview_paged or delta == 0:
+		return
+	if not _ensure_pages():
+		return
+	var want := clampi(_page_index + delta, 0, _page_tops.size() - 1)
+	if want == _page_index:
+		return
+	_page_index = want
+	_scroll_to_page(false)
+
+
+func _on_page_prev_pressed() -> void:
+	_turn_page(-1)
+
+
+func _on_page_next_pressed() -> void:
+	_turn_page(1)
+
+
+## 翻页模式的输入。**接在 RTL 上**（`_setup_preview` 里连的）。
+##
+## Godot 的 GUI 分发是"从鼠标下最上层控件往上冒"，`accept_event()` 能挡住祖先 SC ——
+## **实测确认**（README §7.20 ⑬）：不 accept 时外层 `scroll_vertical` 0 → 108，
+## accept 之后停在 0。前提是 `rtl.mouse_filter == STOP`（实测成立）。
+##
+## **不翻页模式时一个字都不做、也不 accept** —— 滚轮照旧冒泡到外层 SC，
+## 和改动前逐位相同。这条 early-return 是整个功能"默认行为零变化"的落点。
+func _on_preview_rtl_gui_input(ev: InputEvent) -> void:
+	if not _preview_paged:
+		return
+	if ev is not InputEventMouseButton:
+		return
+	var mb := ev as InputEventMouseButton
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		# 滚轮**永远**被吃掉（哪怕已经在头/尾页）：翻页模式下正文就不该能自由滚动，
+		# 放一个滚轮下去会变成"翻了一页又滑了半屏"，比不动还难受。
+		_turn_page(-1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
+		preview_rtl.accept_event()
+		return
+	if mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if mb.pressed:
+		_click_pos = mb.position
+		_click_arming = true
+		return
+	if not _click_arming:
+		return
+	_click_arming = false
+	# 位移超过阈值 = **拖选文字**，不翻页。`RTL.selection_enabled` 是开着的，
+	# 没有这一条的话选字会顺带翻一页，等于没法复制正文。
+	if (mb.position - _click_pos).length() > PREVIEW_CLICK_SLOP:
+		return
+	# 左半屏上一页、右半屏下一页。用 **RTL 自己的宽**取半，不是窗口或 SC 的 ——
+	# 选了"阅读宽度"之后正文列是居中的，按窗口取半会和用户看到的半屏对不上。
+	_pending_turn = -1 if mb.position.x < preview_rtl.size.x * 0.5 else 1
+	_resolve_pending_turn.call_deferred()
+
+
+## 抬手时登记的那个翻页决定，在这里兑现 —— **存在的唯一理由是"点链接不翻页"**。
+##
+## 为什么不能直接在抬手处判：`meta_clicked` 排在 `gui_input` 信号**之后**。
+## 这是**实测**出来的次序（README §7.20 ⑬）：
+##     ["gui_input:press", "gui_input:release", "meta_clicked", "deferred"]
+## 所以"meta_clicked 置标志、点击处理器读标志"这种护栏**永远失效**，
+## 而且失效得**很安静**：不报错、不崩，只是每点一次链接就多翻一页。
+## 延迟一步再问就没这个问题 —— 实测 `deferred` 排在 `meta_clicked` **之后**。
+##
+## （也试过别的路，全死了：`is_meta_hovered()` 在 4.7 里**不存在**；
+## `meta_hover_started/ended` 在鼠标精确落在链接上时**一次都不发**；
+## RTL 的 meta 相关方法只有 push/set/remove/get_meta_list 那八个，
+## **没有任何一个能回答"鼠标下的字是不是链接"**。）
+func _resolve_pending_turn() -> void:
+	var d := _pending_turn
+	_pending_turn = 0
+	var was_link := _preview_meta_clicked_frame
+	_preview_meta_clicked_frame = false
+	if d != 0 and not was_link:
+		_turn_page(d)
+
+
+## 阅读区尺寸变了 → 每页装得下的量变了 → 页码表作废。
+##
+## **只置脏 + 帧末合并重算，不在这里同步跑走查**：拖动分隔条会连发 resized，
+## 同步重算就是每帧一次全篇走查（12 万字符 10.2ms/帧），拖动会明显发涩。
+## 合并之后**仍然是每帧最多一次**，但至少不会一次信号一次 ——
+## 而且滚动模式下这个函数什么都不做（表根本用不上）。
+func _on_preview_sc_resized() -> void:
+	_invalidate_pages()
+	if _preview_paged:
+		_queue_page_refresh()
 
 
 ## 纯函数：1234567 → "1,234,567"。只为了让那句"文件太长"好读。
@@ -1973,13 +2671,63 @@ func _popup_preview_menu(menu: PopupMenu, anchor: Control) -> void:
 	menu.popup(Rect2i(Vector2i(anchor.get_global_rect().position), Vector2i.ZERO))
 
 
+## 把"当前生效的那一项"打上勾。
+##
+## ⚠️ 原来这里是「mode 菜单 early-return，**其余一律当字号菜单**」，加第三个菜单就会
+## 静默串台：阅读菜单的 id 0..4 会被拿去索引 PREVIEW_FONT_SIZES，打错勾；id 12 直接下标越界。
+## 所以改成三个菜单**各认各的**，最后一个分支才是字号，并且带上下界检查 ——
+## 未知菜单宁可一个勾都不打，也不要去索引一张不属于它的表。
 func _sync_preview_menu_checks(menu: PopupMenu) -> void:
-	if menu == _preview_mode_menu:
-		for i in menu.item_count:
-			menu.set_item_checked(i, menu.get_item_id(i) == _preview_mode_override)
-		return
 	for i in menu.item_count:
-		menu.set_item_checked(i, PREVIEW_FONT_SIZES[menu.get_item_id(i)] == _preview_font_size)
+		# 分隔线和组标题都不该有勾（组标题还是 disabled 的，打勾更怪）。
+		if menu.is_item_separator(i):
+			continue
+		var id := menu.get_item_id(i)
+		if id == READING_ID_HEADER:
+			continue
+		var on := false
+		if menu == _preview_mode_menu:
+			on = id == _preview_mode_override
+		elif menu == _reading_menu:
+			on = _reading_is_current(id)
+		elif menu == _preview_font_menu:
+			on = id >= 0 and id < PREVIEW_FONT_SIZES.size() \
+				and PREVIEW_FONT_SIZES[id] == _preview_font_size
+		menu.set_item_checked(i, on)
+
+
+## 阅读菜单里，这个 id 是不是当前生效的那一档。
+##
+## 判断顺序就是"从大到小"：五段的基准是 40 / 30 / 20 / 10 / 0，所以 `>= 基准` 就是从最大
+## 那段开始回落 —— 写成从小到大会全部落进"行距"那一段（`id=42 >= 0` 就返回了）。
+##
+## ⚠️ **加新段必须给它一个比现有最大值更大的基准，并且插在链子的最前面**。
+## 新段基准比某个旧段小的话，它会被那个旧段**整个吞掉**：不崩，只是永远打错勾。
+func _reading_is_current(id: int) -> bool:
+	if id >= READING_ID_PAGED:
+		var p := id - READING_ID_PAGED
+		return p < PREVIEW_PAGED_LABELS.size() and (p == 1) == _preview_paged
+	if id >= READING_ID_SCHEME:
+		var s := id - READING_ID_SCHEME
+		return s < Palette.NAMES.size() and s == _preview_scheme
+	if id >= READING_ID_PAGE_WIDTH:
+		var w := id - READING_ID_PAGE_WIDTH
+		return w < PREVIEW_PAGE_WIDTHS.size() and PREVIEW_PAGE_WIDTHS[w] == _preview_page_width
+	if id >= READING_ID_INDENT:
+		var n := id - READING_ID_INDENT
+		return n < PREVIEW_INDENTS.size() and PREVIEW_INDENTS[n] == _preview_indent
+	var k := id - READING_ID_LINE_SCALE
+	return k >= 0 and k < PREVIEW_LINE_SCALES.size() \
+		and PREVIEW_LINE_SCALES[k] == _preview_line_scale
+
+
+## 往阅读菜单里加一段：一个禁用的组标题 + 若干选项。
+## 选项 id = 基准 + 下标（见 READING_ID_* 那组常量）。
+func _add_reading_section(menu: PopupMenu, title: String, labels: Array, base_id: int) -> void:
+	menu.add_item(title, READING_ID_HEADER)
+	menu.set_item_disabled(menu.item_count - 1, true)
+	for i in labels.size():
+		menu.add_item(String(labels[i]), base_id + i)
 
 
 func _on_preview_mode_id_pressed(id: int) -> void:
@@ -2002,6 +2750,253 @@ func _on_preview_font_id_pressed(id: int) -> void:
 	# 字号还喂给了 MarkdownToBbcode 当基准（标题字号按它算），所以得整篇重排，
 	# 不是只调主题就完事。
 	_update_preview()
+	_save_reading_settings()
+
+
+# ---------------- 阅读设置（五项可调） ----------------
+
+func _on_preview_reading_button_pressed() -> void:
+	_popup_preview_menu(_reading_menu, _reading_button)
+
+
+## 阅读菜单里选了一项。**每个 setter 的重渲染粒度不同**，这是本函数唯一要小心的地方：
+##
+## | 改的是 | 要做什么 | 为什么 |
+## |---|---|---|
+## | 行距 | 重设主题常量 | 只影响 RTL 的排版参数，重跑转换器纯属白烧 |
+## | 缩进字宽 | **整篇重排** | 缩进是转换器拼进字符串里的（全角空格） |
+## | 阅读宽度 | 重设 SC 的 min 尺寸 | 布局参数，同上 |
+## | 翻页模式 | 重设 SC 的滚动形式 + 重建分页表 | 布局参数，同上；分页表是**惰性**重算的 |
+## | 阅读主题 | **整篇重排** | 那 10 处 `[color=]` 是拼在输出串里的 |
+##
+## 主题这一条最容易想当然：`_apply_preview_scheme()` **不够**，它只覆盖 RTL 的主题项，
+## 而 `[color=...]` 的优先级**高于**主题项 —— 代码块底色、链接、引用、标题一处都不会变。
+## 所以主题必须先 apply 再整篇重排（retint 在转换器返回前跑）。
+func _on_preview_reading_id_pressed(id: int) -> void:
+	if id < 0:
+		return          # 组标题（disabled，正常点不到，但显式挡一下比越界崩掉便宜）
+	if id >= READING_ID_PAGED:
+		var p := id - READING_ID_PAGED
+		if p >= PREVIEW_PAGED_LABELS.size() or (p == 1) == _preview_paged:
+			return
+		_preview_paged = p == 1
+		# 和"阅读宽度"同档：只改布局，**不重跑转换器**（同一份 BBCode 换个滚法）。
+		_apply_preview_paged()
+	elif id >= READING_ID_SCHEME:
+		var s := id - READING_ID_SCHEME
+		if s >= Palette.NAMES.size() or s == _preview_scheme:
+			return
+		_preview_scheme = s
+		_apply_preview_scheme()
+		_update_preview()
+	elif id >= READING_ID_PAGE_WIDTH:
+		var w := id - READING_ID_PAGE_WIDTH
+		if w >= PREVIEW_PAGE_WIDTHS.size() or PREVIEW_PAGE_WIDTHS[w] == _preview_page_width:
+			return
+		_preview_page_width = PREVIEW_PAGE_WIDTHS[w]
+		_apply_preview_page_width()
+	elif id >= READING_ID_INDENT:
+		var n := id - READING_ID_INDENT
+		if n >= PREVIEW_INDENTS.size() or PREVIEW_INDENTS[n] == _preview_indent:
+			return
+		_preview_indent = PREVIEW_INDENTS[n]
+		_update_preview()
+	else:
+		var k := id - READING_ID_LINE_SCALE
+		if k < 0 or k >= PREVIEW_LINE_SCALES.size() or PREVIEW_LINE_SCALES[k] == _preview_line_scale:
+			return
+		_preview_line_scale = PREVIEW_LINE_SCALES[k]
+		_apply_preview_font_size()
+	# 关掉菜单就落盘。**不节流**：这几项都是人手点出来的，一次点击一次写盘远比
+	# "拖了半天忘保存"划算。真正的重活（重排）已经在上面按各自的粒度做完了。
+	_save_reading_settings()
+
+
+func _on_preview_toc_toggle_pressed() -> void:
+	if _toc_tree == null:
+		return
+	# 没目录就不给开：右栏只有 274px 宽，开一个空框纯占地方。
+	_toc_tree.visible = _toc_toggle_button.button_pressed and not _chapters.is_empty()
+	if _toc_toggle_button.button_pressed and _chapters.is_empty():
+		# 按钮自己回弹，否则它会显示成"开着"而框是空的，下次点又什么都不发生。
+		_toc_toggle_button.set_pressed_no_signal(false)
+
+
+func _on_toc_item_selected() -> void:
+	var item := _toc_tree.get_selected()
+	if item == null:
+		return
+	var p: Variant = item.get_metadata(0)
+	if p == null:
+		return
+	_jump_to_paragraph(int(p))
+
+
+## 跳到第 p 段（0 基）。段落号 = **输出** BBCode 的行号，见 to_bbcode_with_toc 的头注释。
+##
+## 整个跳转就这一行，因为 `get_paragraph_offset()` 直接给出该段的垂直像素偏移，
+## 而且**跟随折行**（实测：宽度 274→160 时同一段 595→1094）——
+## 于是"按字体度量自己估算折行"那套方案根本不需要。
+##
+## 为什么读 offset 前不用等帧：目录是**点击**触发的，点的时候 RTL 早已按当前文本排完版
+## （没有任何一条路径会"改完 text 立刻跳"）。但要滚的**不是 RTL 自己** ——
+## `fit_content = true` 让它正好和内容等高、自己没得滚，滚动条在外层 ScrollContainer 上，
+## 所以落点必须设在 SC 上，并且要 `set_deferred`（同 _render_preview 的理由：
+## 索引刚变时 SC 的滚动上限可能还是旧值，直接写会被按旧上限夹一次）。
+func _jump_to_paragraph(p: int) -> void:
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	if sc == null:
+		return
+	if p < 0 or p >= preview_rtl.get_paragraph_count():
+		return
+	var y := int(preview_rtl.get_paragraph_offset(p))
+	if _preview_paged:
+		# 翻页模式下**吸附到该段所在页的页首**，不直接落到段落偏移上 ——
+		# 否则跳过去的位置在页中间，下一页就从半路开始了（同一页里会读到两段半）。
+		# 段首 → 页号走的是和翻页、重排复位同一套反查。
+		#
+		# ⚠️ 这里用**立即写**，不是 set_deferred。上面那段"点击触发，RTL 早已排完版"
+		# 的推理对滚动作数同样成立，所以不存在"上限还是旧值"的问题。
+		# 而延迟写会开一个窗口：从这次调用到帧末真正写下去之间，任何一次表重建都会把
+		# `_page_index` 按**当时还没更新的 scroll** 反推一遍，把刚定好的页码冲掉。
+		# 立即写没有这个窗口。
+		if _ensure_pages():
+			_page_index = _page_index_for(y)
+			_scroll_to_page(false)
+			return
+		# 表还建不起来（高度为 0）就退回落点写法，至少不比改动前差。
+	sc.set_deferred("scroll_vertical", y)
+
+
+## 换一份目录。**只有真的变了才重建列表。**
+##
+## 这条门控是打字场景的性能关键：防抖每 200ms 重排一次，而重排必然带出新的 chapters
+## 数组 —— 但用户敲的是正文，章节一个都没变。无条件重建的话，打字时目录每 200ms
+## 清空重填一次（还会把用户展开的层级、滚动位置全抖掉）。
+func _set_chapters(chapters: Array) -> void:
+	if _same_chapters(chapters):
+		return
+	_chapters = chapters
+	_rebuild_toc()
+
+
+## 新旧目录是不是同一份。**只比 title / paragraph / level** —— source_line 是给调试看的，
+## 改个空行就会变，拿它参与比较会让"只挪了空行"也触发重建。
+func _same_chapters(other: Array) -> bool:
+	if other.size() != _chapters.size():
+		return false
+	for i in other.size():
+		var a: Dictionary = _chapters[i]
+		var b: Dictionary = other[i]
+		if String(a.get("title", "")) != String(b.get("title", "")):
+			return false
+		if int(a.get("paragraph", -1)) != int(b.get("paragraph", -1)):
+			return false
+		if int(a.get("level", 0)) != int(b.get("level", 0)):
+			return false
+	return true
+
+
+## 重建目录树。层级靠 level（1 = 卷/部/篇，2 = 章）嵌套，用栈做父子推导。
+##
+## 栈的做法照 FileTree 那套"代码建树"的模板（hide_root + create_item），
+## 唯一多出来的就是 level 的父子关系。
+func _rebuild_toc() -> void:
+	if _toc_tree == null:
+		return
+	_toc_tree.clear()
+	var root := _toc_tree.create_item()
+	# 栈里存的是"每一层最近的那个条目"：stack[0] = 最近的 level 1，stack[1] = 它下面的 level 2。
+	var stack: Array[TreeItem] = []
+	for c in _chapters:
+		var level: int = maxi(1, int(c.get("level", 2)))
+		# 回退到"这一层的父层"。level 1 会把栈清空，于是下一个 level 1 又是顶级。
+		while stack.size() >= level:
+			stack.pop_back()
+		# 栈空 = 这一层没有父（比如一章都没有就来了个 level 2）—— 挂到根上，
+		# 不能让它落不下去：挂不上就等于整条目录少了几章，而且不报错。
+		var parent: TreeItem = root if stack.is_empty() else stack[stack.size() - 1]
+		var item := _toc_tree.create_item(parent)
+		var title := String(c.get("title", ""))
+		item.set_text(0, title)
+		item.set_metadata(0, int(c.get("paragraph", 0)))
+		# 提示里**必须带上标题全文**，不能只有段落号。右栏固定 274px，而目录的左缩进
+		# 每层还要吃十几个像素 —— 长标题（"第一章 在那个下着大雨的傍晚我终于想起来了"）
+		# 在树里一定是被**裁掉**的。单列 Tree 的列宽会撑满树宽，所以溢出部分连横向
+		# 滚动条都出不来（不是没开，是根本没有溢出）。悬停提示是唯一能读到全文的地方。
+		item.set_tooltip_text(0, "%s\n（第 %d 段）" % [title, int(c.get("paragraph", 0)) + 1])
+		stack.append(item)
+
+	# 没章节时把目录收掉：不留空框，也不留一个"看似开着"的按钮。
+	var has := not _chapters.is_empty()
+	_toc_toggle_button.disabled = not has
+	if not has and _toc_tree.visible:
+		_toc_tree.visible = false
+		_toc_toggle_button.set_pressed_no_signal(false)
+
+
+# ---------------- 阅读设置的持久化 ----------------
+#
+# 走 DSettingsManager（不是 DSaveManager）：阅读偏好语义上是"设置"不是"存档进度"，
+# 塞进存档会把 last_modified_timestamp 顶来顶去、还多弹一条顶部消息。
+#
+# 形状照抄 _load_favorites() / _save_favorites()，只有守卫不同：
+# 存档那边判的是 save_name == ""，设置这边判的是 **settings == null**。
+# 那个 null 是**真的会出现**的：settings 是 call_deferred 加载的，见 _setup_preview() 尾注释。
+
+## 把当前五项（外加字号、手动模式）读回来。
+##
+## ⚠️ **最后必须把五个应用函数全调一遍**，尤其是 `_update_preview()` ——
+## 少了它，存盘的值**永远不会生效**：不是"第一帧先用默认值"那么轻，是按了重启还是不生效。
+## 因为 _preview_* 只在设置菜单的 setter 里被应用，而设置菜单要用户点一下才会走。
+func _load_reading_settings() -> void:
+	if DSettingsManager.settings == null:
+		return
+	var s: DerSettingsRes = DSettingsManager.settings
+
+	# 每一项都**先验档位表里有没有**再认。设置文件是可以被手改、也可以来自旧版本的，
+	# 直接赋值的话，一个越界的下标会让菜单打不出任何勾（而不是报错），很难查。
+	if PREVIEW_FONT_SIZES.has(s.preview_font_size):
+		_preview_font_size = s.preview_font_size
+	if PREVIEW_LINE_SCALES.has(s.preview_line_scale):
+		_preview_line_scale = s.preview_line_scale
+	if PREVIEW_INDENTS.has(s.preview_indent):
+		_preview_indent = s.preview_indent
+	if PREVIEW_PAGE_WIDTHS.has(s.preview_page_width):
+		_preview_page_width = s.preview_page_width
+	if s.preview_scheme >= 0 and s.preview_scheme < Palette.NAMES.size():
+		_preview_scheme = s.preview_scheme
+	# 布尔项不需要"档位表里有没有"那套校验（它只有两个合法值，读出来必然是其一）。
+	_preview_paged = s.preview_paged
+	# 用 AUTO..MARKDOWN 这个闭区间，不写 `PreviewOverride.size()`：枚举名字在这里是
+	# 常量字典，`.size()` 能不能用要看解析上下文，而闭区间是白纸黑字、也不会因为
+	# 以后往中间插一个模式而悄悄放宽。
+	if s.preview_mode_override >= int(PreviewOverride.AUTO) \
+			and s.preview_mode_override <= int(PreviewOverride.MARKDOWN):
+		_preview_mode_override = s.preview_mode_override as PreviewOverride
+
+	# 五项各自的"应用层"，一个都不能漏：
+	_apply_preview_font_size()     # 字号 + 行距（主题常量）
+	_apply_preview_scheme()        # 配色（RTL 主题项）
+	_apply_preview_page_width()    # 页宽（外层 SC 的 min 尺寸）
+	_apply_preview_paged()         # 翻页模式（外层 SC 的滚动模式）—— 同理，只改布局
+	_update_preview()              # 缩进 / 配色（转换器）—— 顺带把右栏该不该显示也判一次
+
+
+## 落盘。`settings == null` 时**直接不写**：那说明设置模块还没 deferred 加载完，
+## 这时候新建一个 DerSettingsRes 覆盖上去，会把用户已存的音频/画面/语言全冲成默认值。
+func _save_reading_settings() -> void:
+	if DSettingsManager.settings == null:
+		return
+	var s: DerSettingsRes = DSettingsManager.settings
+	s.preview_font_size = _preview_font_size
+	s.preview_mode_override = int(_preview_mode_override)
+	s.preview_line_scale = _preview_line_scale
+	s.preview_indent = _preview_indent
+	s.preview_page_width = _preview_page_width
+	s.preview_scheme = _preview_scheme
+	s.preview_paged = _preview_paged
+	DSettingsManager.save_settings()
 
 
 ## 点预览里的链接。**这里再挡一次白名单**。
@@ -2011,6 +3006,11 @@ func _on_preview_font_id_pressed(id: int) -> void:
 ## 的唯一一处 —— javascript: 交给默认浏览器是什么后果取决于机器上装了什么。
 ## 两道防线的代价总共是一次字符串比较。
 func _on_preview_meta_clicked(meta: Variant) -> void:
+	# **第一行就置标志**，位置是有讲究的：翻页模式的点击护栏靠它
+	# （_resolve_pending_turn 在帧末读，那时它一定已经置起来了 —— 实测次序见那里）。
+	# 放在 safe_url 之后、shell_open 之前都不行：`javascript:` 这类被挡掉的链接
+	# 也是"点到了链接"，同样不该顺带翻一页。
+	_preview_meta_clicked_frame = true
 	var url := MarkdownToBbcode.safe_url(str(meta))
 	if url == "":
 		return
