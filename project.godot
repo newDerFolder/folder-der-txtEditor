@@ -15,15 +15,15 @@ run/main_scene="uid://drn64b5pav01m"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 run/max_fps=144
 boot_splash/image="uid://du527uh7ok7d1"
-config/icon="uid://dwq48bi8qdqaf"
+config/icon="uid://ce8nk3nu3u34q"
 
 [autoload]
 
-_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 DMainManager="*uid://dghqu1bk0kl05"
 DMessageManager="*uid://dbcvkwaksbnwa"
 DSaveManager="*uid://bfpoeg5fusesr"
 DSettingsManager="*uid://b6vajitinay80"
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
 

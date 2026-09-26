@@ -8,6 +8,12 @@
 [ext_resource type="CodeHighlighter" uid="uid://bqsy83r5bx28m" path="res://resource/new_code_highlighter.tres" id="4_pmkfb"]
 [ext_resource type="Texture2D" uid="uid://bi15gqg8dxlvq" path="res://asset/icon/folderIcon.png" id="5_5wg7p"]
 [ext_resource type="Texture2D" uid="uid://c5emdqcoi8if" path="res://asset/icon/start.png" id="7_5wg7p"]
+[ext_resource type="Texture2D" uid="uid://pvllrpswxg4v" path="res://asset/icon/goParentFolderIcon.png" id="7_fm58e"]
+[ext_resource type="Texture2D" uid="uid://didtms5bggxfx" path="res://asset/icon/eyeIcon.png" id="7_oa2n3"]
+[ext_resource type="Texture2D" uid="uid://dblwh4fdx2uyf" path="res://asset/icon/goChildFolderIcon.png" id="8_oa2n3"]
+[ext_resource type="Texture2D" uid="uid://dwq48bi8qdqaf" path="res://asset/icon/folderTxt.png" id="11_0l257"]
+[ext_resource type="Script" uid="uid://v74j0l6i0paa" path="res://addons/der_framework/DUi/ShortenNode/Control/VBC.gd" id="12_8kdvj"]
+[ext_resource type="PackedScene" uid="uid://ccsaimk4f1muc" path="res://scene/Previewer/MobileNovelReader.tscn" id="14_sxp3n"]
 
 [sub_resource type="GDScript" id="GDScript_cee7s"]
 script/source = "extends Button
@@ -25,6 +31,8 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
 theme = ExtResource("1_jhugg")
 script = ExtResource("1_7vvka")
 
@@ -60,11 +68,11 @@ grow_vertical = 2
 [node name="PC" type="PanelContainer" parent="VBC" unique_id=1872206963]
 layout_mode = 2
 
-[node name="HBC" type="HBoxContainer" parent="VBC/PC" unique_id=627105375]
+[node name="HBC" type="HFlowContainer" parent="VBC/PC" unique_id=242495519]
 layout_mode = 2
 
 [node name="SaveButton" type="Button" parent="VBC/PC/HBC" unique_id=1293850510]
-custom_minimum_size = Vector2(150, 0)
+custom_minimum_size = Vector2(125, 0)
 layout_mode = 2
 text = "Save"
 icon = ExtResource("4_5wg7p")
@@ -72,7 +80,7 @@ alignment = 0
 expand_icon = true
 
 [node name="SaveAsButton" type="Button" parent="VBC/PC/HBC" unique_id=1255082483]
-custom_minimum_size = Vector2(150, 0)
+custom_minimum_size = Vector2(125, 0)
 layout_mode = 2
 text = "Save As"
 icon = ExtResource("4_5wg7p")
@@ -86,7 +94,7 @@ text = "Setting"
 script = SubResource("GDScript_cee7s")
 
 [node name="Open" type="Button" parent="VBC/PC/HBC" unique_id=363884049]
-custom_minimum_size = Vector2(150, 0)
+custom_minimum_size = Vector2(125, 0)
 layout_mode = 2
 text = "Open"
 icon = ExtResource("4_7qu2h")
@@ -94,10 +102,18 @@ alignment = 0
 expand_icon = true
 
 [node name="OpenDirButton" type="Button" parent="VBC/PC/HBC" unique_id=1182736455]
-custom_minimum_size = Vector2(150, 0)
+custom_minimum_size = Vector2(125, 0)
 layout_mode = 2
 text = "OpenDir"
 icon = ExtResource("5_5wg7p")
+alignment = 0
+expand_icon = true
+
+[node name="OpenDirButton2" type="Button" parent="VBC/PC/HBC" unique_id=720321500]
+custom_minimum_size = Vector2(125, 0)
+layout_mode = 2
+text = "Preview"
+icon = ExtResource("7_oa2n3")
 alignment = 0
 expand_icon = true
 
@@ -120,8 +136,8 @@ text = "no file"
 [node name="SpC" type="SplitContainer" parent="VBC" unique_id=1371464677]
 layout_mode = 2
 size_flags_vertical = 3
-split_offsets = PackedInt32Array(300)
-split_offset = 300
+split_offsets = PackedInt32Array(221, -274)
+split_offset = 221
 
 [node name="HBC" type="HBoxContainer" parent="VBC/SpC" unique_id=578171199]
 layout_mode = 2
@@ -136,6 +152,23 @@ tooltip_text = "Explorer"
 icon = ExtResource("5_5wg7p")
 expand_icon = true
 
+[node name="Button3" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=1897514843]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+tooltip_text = "前往上一级文件夹"
+icon = ExtResource("7_fm58e")
+expand_icon = true
+
+[node name="Button4" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=1346503616]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+tooltip_text = "前进（回到按「上一级」之前所在的文件夹）"
+icon = ExtResource("8_oa2n3")
+expand_icon = true
+
+[node name="HSeparator" type="HSeparator" parent="VBC/SpC/HBC/VBC" unique_id=341626915]
+layout_mode = 2
+
 [node name="Button2" type="Button" parent="VBC/SpC/HBC/VBC" unique_id=401970257]
 custom_minimum_size = Vector2(40, 40)
 layout_mode = 2
@@ -143,40 +176,43 @@ tooltip_text = "Stars"
 icon = ExtResource("7_5wg7p")
 expand_icon = true
 
-[node name="PC" type="PanelContainer" parent="VBC/SpC/HBC" unique_id=1641607152]
+[node name="VBC2" type="VBoxContainer" parent="VBC/SpC/HBC" unique_id=956203640]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="VBC2" type="VBoxContainer" parent="VBC/SpC/HBC/PC" unique_id=956203640]
+[node name="PC" type="PanelContainer" parent="VBC/SpC/HBC/VBC2" unique_id=1901984669]
 layout_mode = 2
 
-[node name="PC" type="PanelContainer" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1901984669]
+[node name="HBC" type="HBoxContainer" parent="VBC/SpC/HBC/VBC2/PC" unique_id=1601234501]
 layout_mode = 2
 
-[node name="HBC" type="HBoxContainer" parent="VBC/SpC/HBC/PC/VBC2/PC" unique_id=1601234501]
-layout_mode = 2
-
-[node name="Label" type="Label" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=770872228]
+[node name="Label" type="Label" parent="VBC/SpC/HBC/VBC2/PC/HBC" unique_id=770872228]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Explorer"
 
-[node name="NewFileButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234502]
+[node name="NewFileButton" type="Button" parent="VBC/SpC/HBC/VBC2/PC/HBC" unique_id=1601234502]
+custom_minimum_size = Vector2(25, 0)
 layout_mode = 2
-text = "新建文件"
+tooltip_text = "新建文件"
+icon = ExtResource("11_0l257")
+expand_icon = true
 
-[node name="NewFolderButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234503]
+[node name="NewFolderButton" type="Button" parent="VBC/SpC/HBC/VBC2/PC/HBC" unique_id=1601234503]
+custom_minimum_size = Vector2(25, 0)
 layout_mode = 2
-text = "新建文件夹"
+tooltip_text = "新建文件夹"
+icon = ExtResource("5_5wg7p")
+expand_icon = true
 
-[node name="FavDirButton" type="Button" parent="VBC/SpC/HBC/PC/VBC2/PC/HBC" unique_id=1601234504]
-custom_minimum_size = Vector2(36, 0)
+[node name="FavDirButton" type="Button" parent="VBC/SpC/HBC/VBC2/PC/HBC" unique_id=1601234504]
+custom_minimum_size = Vector2(25, 0)
 layout_mode = 2
 tooltip_text = "收藏当前文件夹"
 icon = ExtResource("7_5wg7p")
 expand_icon = true
 
-[node name="FileTree" type="Tree" parent="VBC/SpC/HBC/PC/VBC2" unique_id=1446380007]
+[node name="FileTree" type="Tree" parent="VBC/SpC/HBC/VBC2" unique_id=1446380007]
 layout_mode = 2
 size_flags_vertical = 3
 hide_root = true
@@ -199,6 +235,33 @@ highlight_current_line = true
 draw_control_chars = true
 draw_tabs = true
 draw_spaces = true
+
+[node name="VBC" type="VBoxContainer" parent="VBC/SpC" unique_id=1064501064]
+layout_mode = 2
+script = ExtResource("12_8kdvj")
+metadata/_custom_type_script = "uid://v74j0l6i0paa"
+
+[node name="PanelContainer" type="PanelContainer" parent="VBC/SpC/VBC" unique_id=783878497]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBC/SpC/VBC/PanelContainer" unique_id=634746229]
+layout_mode = 2
+text = "Preview"
+
+[node name="HFlowContainer" type="HFlowContainer" parent="VBC/SpC/VBC" unique_id=1333365080]
+layout_mode = 2
+
+[node name="Button2" type="Button" parent="VBC/SpC/VBC/HFlowContainer" unique_id=1622485117]
+layout_mode = 2
+text = "更改预览器"
+
+[node name="FontSizeButton" type="Button" parent="VBC/SpC/VBC/HFlowContainer" unique_id=504749366]
+layout_mode = 2
+tooltip_text = "预览字号"
+text = "设置字号"
+
+[node name="MobileNovelReader" parent="VBC/SpC/VBC" unique_id=1605829033 instance=ExtResource("14_sxp3n")]
+layout_mode = 2
 
 [node name="PC2" type="PanelContainer" parent="VBC" unique_id=181409538]
 layout_mode = 2

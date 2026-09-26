@@ -1,0 +1,28 @@
+[gd_scene format=3 uid="uid://ccsaimk4f1muc"]
+
+[ext_resource type="Script" uid="uid://v74j0l6i0paa" path="res://addons/der_framework/DUi/ShortenNode/Control/VBC.gd" id="1_8b7d8"]
+[ext_resource type="Script" uid="uid://b7qscq476iy15" path="res://addons/der_framework/DUi/ShortenNode/Control/SC.gd" id="2_hp8bb"]
+
+[node name="MobileNovelReader" type="VBoxContainer" unique_id=1605829033]
+offset_right = 122.0
+offset_bottom = 127.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("1_8b7d8")
+metadata/_custom_type_script = "uid://v74j0l6i0paa"
+
+[node name="SC" type="ScrollContainer" parent="." unique_id=1698278898]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+script = ExtResource("2_hp8bb")
+metadata/_custom_type_script = "uid://b7qscq476iy15"
+
+[node name="RichTextLabel" type="RichTextLabel" parent="SC" unique_id=1443398253]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+selection_enabled = true

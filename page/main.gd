@@ -8,7 +8,9 @@ const TEXT_EXTENSIONS := [
 ]
 # 这些目录不展开
 const SKIP_DIRS := ["node_modules", "__pycache__", "venv", "env"]
-# 递归深度上限，防符号链接成环时无限递归
+# 目录树的深度上限。懒加载之后它**不再是建树时的刹车**（每次只建一层，本来就建不深），
+# 拦的是另一种情况：符号链接成环时，用户可以顺着环一直点下去，每一层都真的建出来。
+# 到了这一层就停：条目照样显示、照样能点，只是不再往里建。
 const MAX_TREE_DEPTH := 12
 
 # 侧边栏条目标图标的边长（像素）
@@ -27,11 +29,47 @@ var _icon_dir: Texture2D
 var _icon_file: Texture2D
 var _icon_unsupported: Texture2D
 
+# ---------------- 预览面板的常量 ----------------
+
+# 扩展名 → 预览模式。**和 TEXT_EXTENSIONS 是两回事**：那个列表管的是"能不能编辑"
+# （json / py / gd 都在里面），这个只管"有没有阅读视图"。所以它短得多，而且
+# 加一个可编辑类型**不应该**顺带让它有预览 —— 两边共用一个表是将来最容易犯的错。
+const PREVIEW_EXT_MODE := {"txt": 1, "md": 2}
+
+# 打字停多久才重排。0.2 是手感和开销的折中：再短等于每敲一键排一次版，
+# 再长（0.5+）就能看出"停下来了但它还没跟上"。
+const PREVIEW_DEBOUNCE_SEC := 0.2
+
+# 超过这个字符数就不排了，直接给一句提示。
+# 排版是 O(n) 的，几 MB 的 txt 每敲一键重排一次会把主线程钉住 —— 宁可明确说
+# "太长了不预览"，也不要让程序看起来假死。
+const PREVIEW_MAX_CHARS := 120_000
+
+# 手动字号档位，以及默认值（必须**在档位里**，否则弹菜单时没有一个条目是选中的）
+const PREVIEW_FONT_SIZES := [12, 14, 16, 18, 20, 22, 24, 28, 32]
+const PREVIEW_FONT_DEFAULT := 16
+
+# RichTextLabel 的字体大小是**五个独立的主题项**，各有各的默认值。只改
+# normal_font_size 的话，加粗标题会留在 16 而正文变成 24 —— "标题比正文还小"。
+# 这不是防御性代码，是实测过的：只覆盖 normal 之后读 bold_font_size，仍然是 16。
+const PREVIEW_FONT_ITEMS := [
+	"normal_font_size", "bold_font_size", "italics_font_size",
+	"bold_italics_font_size", "mono_font_size",
+]
+
+# 行距按**字号的倍数**走，不写死像素 —— 写死的话字号一调大，行距相对就变窄了，
+# 越调越挤。小说是密排长文，行距要松；Markdown 里块多、留白多，行距要收。
+const PREVIEW_LINE_SEP_NOVEL := 0.55
+const PREVIEW_LINE_SEP_MARKDOWN := 0.30
+
+# 超长文件那句提示的灰度，和 MarkdownToBbcode.DIM_FG 同一个色值
+const PREVIEW_DIM_COLOR := "#6b7075"
+
 var current_file_path: String = ""
 var root_dir: String = ""
 
 @onready var text_edit = $VBC/SpC/SC/TextEdit
-@onready var file_tree: Tree = $VBC/SpC/HBC/PC/VBC2/FileTree
+@onready var file_tree: Tree = $VBC/SpC/HBC/VBC2/FileTree
 
 # 添加文件对话框节点引用
 @onready var file_dialog_save = $FileDialogSave
@@ -44,17 +82,64 @@ var root_dir: String = ""
 @onready var delete_dialog: ConfirmationDialog = $DeleteDialog
 
 # 文件树头部那排「新建」按钮（和 Explorer 标题同一行）
-@onready var new_file_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFileButton
-@onready var new_folder_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/NewFolderButton
+@onready var new_file_button: Button = $VBC/SpC/HBC/VBC2/PC/HBC/NewFileButton
+@onready var new_folder_button: Button = $VBC/SpC/HBC/VBC2/PC/HBC/NewFolderButton
 # 「收藏当前文件夹」。**这个按钮不是可有可无的便利**：树是 hide_root = true，当前打开的
 # 那个目录自己**没有行**，右键永远点不到它 —— 没有这个按钮，当前文件夹根本收藏不了。
-@onready var fav_dir_button: Button = $VBC/SpC/HBC/PC/VBC2/PC/HBC/FavDirButton
+@onready var fav_dir_button: Button = $VBC/SpC/HBC/VBC2/PC/HBC/FavDirButton
 
 # 侧边栏那两样：标题，以及左边竖排的两个视图切换按钮。
 # 注意 scene 里叫 "Label" 的节点**有两个**（另一个是工具栏上的 "v0.2"），别漏掉 /HBC。
-@onready var view_label: Label = $VBC/SpC/HBC/PC/VBC2/PC/HBC/Label
+@onready var view_label: Label = $VBC/SpC/HBC/VBC2/PC/HBC/Label
 @onready var explorer_button: Button = $VBC/SpC/HBC/VBC/Button
 @onready var stars_button: Button = $VBC/SpC/HBC/VBC/Button2
+# 左侧竖排的另外两个：上一级 / 前进。场景里叫 Button3 / Button4（没改名，
+# 名字是当初放进去时的；对应关系以这两个变量名为准）。
+# 它们是**动作**按钮，不是开关 —— 没有"按下态"要显示，和上面那两个 toggle 不一样。
+@onready var go_parent_button: Button = $VBC/SpC/HBC/VBC/Button3
+@onready var go_forward_button: Button = $VBC/SpC/HBC/VBC/Button4
+
+# ---------------- 预览面板的节点 ----------------
+#
+# **两个 VBC 重名**，路径别抄错：
+#   $VBC/SpC/VBC        ← 右边这一栏（预览）
+#   $VBC/SpC/HBC/VBC    ← 左边竖着那排图标按钮
+# 下面这些路径里都带 /HBC/，一眼能分辨；不带 HBC 的那两个才是右栏。
+
+# 右栏本身。隐藏它 = 整个预览区收起来、宽度还给编辑器。
+@onready var preview_rail: VBoxContainer = $VBC/SpC/VBC
+# 右栏所在的 SplitContainer（三个子节点：侧边栏 / 编辑器 / 右栏）
+@onready var preview_split: SplitContainer = $VBC/SpC
+# 承载渲染结果的那个 RichTextLabel（在 MobileNovelReader 实例里，隔着一层 ScrollContainer）
+@onready var preview_rtl: RichTextLabel = $VBC/SpC/VBC/MobileNovelReader/SC/RichTextLabel
+# 右栏顶部写着 "Preview" 的标题标签
+@onready var preview_title: Label = $VBC/SpC/VBC/PanelContainer/Label
+# 右栏顶部那两个按钮
+@onready var preview_mode_button: Button = $VBC/SpC/VBC/HFlowContainer/Button2
+@onready var preview_font_button: Button = $VBC/SpC/VBC/HFlowContainer/FontSizeButton
+# 工具栏上那个 "Preview"（眼睛图标）—— 整栏的开关
+@onready var preview_toggle_button: Button = $VBC/PC/HBC/OpenDirButton2
+
+# 防抖 Timer。**在代码里建**（理由见 _setup_preview）：它是用户看不见的管道，
+# 没有"长什么样"要落到场景里。
+var _preview_timer: Timer
+# 两个代码里建的菜单。同理 —— PopupMenu 在场景里也是隐形的，
+# 而手写 tscn 加节点要自己编 unique_id，编错就是"点了菜单不出来"。
+var _preview_mode_menu: PopupMenu
+var _preview_font_menu: PopupMenu
+
+# 用户的**开关意图**（工具栏 Preview 按钮），不等于"右栏此刻可见"：
+# 打开一个 .py 时右栏也是不可见的，但那是按扩展名关的，用户切回 .txt 就该自己回来。
+var _preview_enabled := true
+
+# 手动指定的预览模式。**粘性**：切文件不重置 —— 用户明确说了"这个当成 Markdown 看"，
+# 不该因为换了个文件就忘掉。作用范围见 _effective_preview_mode()。
+var _preview_mode_override := PreviewOverride.AUTO
+
+var _preview_font_size := PREVIEW_FONT_DEFAULT
+
+# 藏右栏之前存下的 split_offsets。**必须先存再藏**，见 _set_preview_rail_visible()。
+var _preview_saved_split_offsets := PackedInt32Array()
 
 # 右键菜单项 id。用枚举而不是裸数字，加/删菜单项时不用回来数顺序。
 # 新项一律**追加在末尾**：插在中间会让后面所有 id 整体 +1，而 README §2 坑 12 / §7.16
@@ -72,6 +157,14 @@ enum MenuId {
 	FAVORITE,               # 收藏 / 取消收藏，两棵树都出现
 }
 
+# 右栏此刻渲染的是什么。NONE = 右栏整个收起来。
+# 和 MenuId 一样，新成员一律**追加在末尾**：插在中间会让后面的值整体 +1。
+enum PreviewMode { NONE, NOVEL, MARKDOWN }
+
+# 用户手动指定的模式。**多一个 AUTO**，所以它和 PreviewMode 不能是同一个枚举 ——
+# 拿 PreviewMode.NONE 兼职"自动"的话，就没法表达"用户明确要求不预览"了。
+enum PreviewOverride { AUTO, NOVEL, MARKDOWN }
+
 # ---------------- 收藏夹 ----------------
 
 # 收藏列表那棵树。**在代码里建**（理由见 _setup_fav_tree），所以它是普通成员变量 ——
@@ -82,6 +175,13 @@ var fav_tree: Tree
 var _favorites: Array[String] = []
 # 现在侧边栏显示的是不是收藏视图
 var _fav_view: bool = false
+
+# 前进栈：按「上一级」时把**离开的那个目录**压进来，按「前进」再弹出去。
+# 只由这一对按钮维护 —— 其他任何换根方式都会清空它（见 set_root_dir 的 keep_forward）。
+# 理由是"从别处跳到一个新目录"等于在导航历史里分了个叉：旧的前进目标已经不该再回去了，
+# 不清的话 OpenDir 之后按「前进」会跳回一个和当前上下文不相干的目录。
+# 浏览器的地址栏是同一个行为。
+var _nav_forward: Array[String] = []
 # 当前弹出的那个右键菜单是冲着哪棵树弹的（file_tree 或 fav_tree）。
 # 菜单是共用的同一个，_build_item_menu / _on_menu_window_input 都要靠它认上下文。
 var _menu_source: Tree
@@ -135,6 +235,14 @@ func _ready():
 	# 同理，也排在上面那个命令行参数循环之前 —— 启动时就带一个文件时，_ready() 里那句
 	# open_and_show 会顺着信号链碰到视图相关的东西，得保证 fav_tree 已经在了。
 	_setup_view_buttons()
+	# 上一级 / 前进。排在命令行参数循环**之前**：没有参数时（正常启动）它们就该是禁用的，
+	# 而那一次设置由 _setup_nav_buttons() 尾巴上的 _update_nav_buttons() 完成；
+	# 带参数启动时 open_and_show() → set_root_dir() → refresh_file_tree() 会再刷一次。
+	_setup_nav_buttons()
+	# 预览必须排在下面那个命令行参数循环**之前**：带一个 .txt 启动时，
+	# open_and_show() 里那句 _update_preview() 会立刻要读 preview_rtl 和防抖 Timer，
+	# 那时候它们得已经在了（同 _setup_fav_tree 排在前面的理由）。
+	_setup_preview()
 
 	# 取命令行传入的第一个真实文件。
 	# 「打开方式」传的是裸参数（get_cmdline_args），带 `--` 的调用 / 编辑器「启动参数」
@@ -186,6 +294,9 @@ func open_and_show(path: String) -> void:
 	if path.is_absolute_path() and not _is_under(path, root_dir):
 		set_root_dir(path.get_base_dir())
 	_select_tree_item_for_path(path)
+	# 放在最后：上面那句 set_root_dir 会重建文件树，先把文件本身安顿好再刷预览，
+	# 免得中途从编辑器读到的还是上一份文本。
+	_update_preview()
 
 # path 是否位于 dir 之内（或就是 dir）。两边都按 set_root_dir 的规范形式比较：
 # 正斜杠、无结尾斜杠。
@@ -265,6 +376,8 @@ func _on_save_as_file_selected(path: String) -> void:
 	if path.get_base_dir() == root_dir:
 		refresh_file_tree()
 	_select_tree_item_for_path(path)
+	# 另存为**能换扩展名**（a.txt → a.md），预览模式跟着扩展名走，所以要重刷。
+	_update_preview()
 
 # 打开按钮 - 弹出打开文件对话框
 func _on_open_pressed() -> void:
@@ -595,7 +708,8 @@ func _on_new_folder_confirmed() -> void:
 	refresh_file_tree()
 	# 选中新建的文件夹（顺便逐级展开它的祖先链），让用户看得见建出来的东西。
 	# 这里不用管展开状态：_select_tree_item_for_path 已经屏蔽了"选中目录 = 切换展开"，
-	# 新目录保持默认的展开态。
+	# 新目录保持默认的折叠态 —— 懒加载之下那也就是"还没建下一层"，
+	# 反正刚建出来的文件夹是空的，展开也看不到东西。
 	_select_tree_item_for_path(new_path)
 
 # ---------------- 文件树头部那排按钮（新建文件 / 新建文件夹 / 收藏当前文件夹） ----------------
@@ -746,6 +860,8 @@ func _on_rename_confirmed() -> void:
 
 	refresh_file_tree()
 	_select_tree_item_for_path(new_path)
+	# 改名**也能换扩展名**（笔记.txt → 笔记.md），和另存为同一个理由。
+	_update_preview()
 
 # ---------------- 删除 ----------------
 
@@ -774,6 +890,10 @@ func _on_delete_confirmed() -> void:
 		$VBC/PC/HBC/Label4.text = "no file"
 
 	refresh_file_tree()
+	# 路径没了 → 模式判成 NONE → 右栏收起来，宽度还给编辑器。
+	# 编辑器里的文本**故意保留**（上面那句注释），所以不能顺手把预览也清空 ——
+	# 收栏是按"当前没有可预览的文件"收的，不是按"文本没了"收的。
+	_update_preview()
 
 # ---------------- 侧边栏文件树 ----------------
 
@@ -801,6 +921,9 @@ func _setup_file_tree() -> void:
 	file_tree.item_selected.connect(_on_file_tree_item_selected)
 	# 双击 / 选中后回车
 	file_tree.item_activated.connect(_on_file_tree_item_activated)
+	# 展开箭头。**必须接**：点箭头不发 item_selected，懒加载没有别的时机去填内容。
+	# 详见 _on_file_tree_item_collapsed —— 那里也解释了为什么它只处理"展开"那一半。
+	file_tree.item_collapsed.connect(_on_file_tree_item_collapsed)
 
 	_open_as_text_dialog = ConfirmationDialog.new()
 	_open_as_text_dialog.title = "按文本打开"
@@ -823,21 +946,31 @@ func _setup_file_tree() -> void:
 
 # 设置文件树的根目录。目录没变时直接返回 ——
 # 这是防止每次点文件都重建整棵树、把所有展开状态重置掉的关键守卫。
-func set_root_dir(dir: String) -> void:
+#
+# keep_forward：「上一级 / 前进」这两个按钮自己换根时传 true —— 它们要么会自己补压栈、
+# 要么已经把目标从栈里弹掉了，不能让这里顺手清空（清了「前进」就再也回不去）。
+# 其余所有调用点都用默认的 false，语义是"从别处跳到新目录 = 历史在这里分叉，
+# 旧的前进目标作废"：OpenDir、Ctrl+O 打开别处的文件、双击收藏里不在当前根下的目录。
+#
+# 早退那条路上**不动**前进栈，这是对的：root_dir 没变，等于什么都没发生。
+func set_root_dir(dir: String, keep_forward := false) -> void:
 	var normalized := dir.replace("\\", "/").simplify_path()
 	if normalized.ends_with("/") and normalized.length() > 1:
 		normalized = normalized.substr(0, normalized.length() - 1)
 	if normalized == root_dir:
 		return
 	root_dir = normalized
+	if not keep_forward:
+		_nav_forward.clear()
 	refresh_file_tree()
 
 func refresh_file_tree() -> void:
-	# 整棵重建会把折叠状态清零，深层目录里改个名整棵树就塌回去，很难用。
-	# 记录的是**被折叠的**目录而不是展开的：TreeItem.collapsed 默认就是 false，
-	# 新建出来的目录天生展开，所以要保留的恰恰是"用户手动折叠过"这个例外。
+	# 整棵重建会把展开状态清零，深层目录里改个名整棵树就塌回去，很难用。
+	# 懒加载之后默认态**反过来了**：新建出来的目录一律是折叠的（不折就意味着要把整棵
+	# 子树建出来，那正是打开 C 盘卡死的原因），所以要保留的变成了"用户展开过"的那些。
+	# 恢复展开的同时会把它们的下一层重新建出来，看到的和刷新前一模一样。
 	# 换根目录时旧路径在新树里找不到，恢复自然是空操作。
-	var collapsed := _collect_collapsed_paths()
+	var expanded := _collect_expanded_paths()
 
 	# 每一条能改变"有没有目录"的路径最后都会走到这里（换根、刷新、_setup_file_tree），
 	# 所以按钮的可用状态在这里统一更新，不用逐个调用点去接。
@@ -846,6 +979,13 @@ func refresh_file_tree() -> void:
 	# （这里跑的时候 _favorites 可能还没读进来 —— 那时它是空的，按下态由
 	#   _setup_fav_tree() 尾巴上那一次补上。）
 	_update_fav_dir_button()
+	# 上一级 / 前进同理，两个都跟着 root_dir 变：
+	#   上一级的可用性 = 这个目录还有没有上级；
+	#   前进的可用性看 _nav_forward —— 而**所有**外部换根都会把它清掉（见 set_root_dir），
+	#   所以它必须在这里刷，不能只在那两个按钮的回调里更新，否则 OpenDir 换根之后
+	#   「前进」还亮着，按下去却什么都不发生。
+	# 位置和上面两个一样，在下面那个"未指定目录"的早退**之前** —— 那条路也要更新按钮。
+	_update_nav_buttons()
 
 	file_tree.clear()
 	var root := file_tree.create_item()
@@ -858,43 +998,37 @@ func refresh_file_tree() -> void:
 		return
 
 	_populate_dir(root, root_dir, 0)
-	_restore_collapsed_paths(collapsed)
+	_restore_expanded_paths(expanded)
 
-# 收集当前处于折叠状态的目录路径。只认目录：文件的 collapsed 恒为默认值，
+# 收集当前处于**展开**状态的目录路径。
+# 懒加载下"展开"恰好等价于"用户点开过" —— 没建出来的目录一律是折叠的，
+# 收进来只会让恢复时白跑一趟。只认目录：文件的 collapsed 恒为默认值，
 # 收进来没意义还可能误伤。
-func _collect_collapsed_paths() -> Dictionary:
-	var out := {}
-	_collect_collapsed_rec(file_tree.get_root(), out)
+func _collect_expanded_paths() -> Array[String]:
+	var out: Array[String] = []
+	_collect_expanded_rec(file_tree.get_root(), out)
 	return out
 
-func _collect_collapsed_rec(item: TreeItem, out: Dictionary) -> void:
+# 递归进所有子条目，折叠的也进 —— 折叠目录里面可能还留着"被展开过但现在看不见"
+# 的子目录（先展开 A/B、再把 A 收起来），那个状态同样要保住。
+func _collect_expanded_rec(item: TreeItem, out: Array[String]) -> void:
 	if item == null:
 		return
 	var child := item.get_first_child()
 	while child != null:
-		if _item_is_dir(child) and child.collapsed:
-			out[_item_path(child)] = true
-		_collect_collapsed_rec(child, out)
+		if _item_is_dir(child) and not child.collapsed:
+			out.append(_item_path(child))
+		_collect_expanded_rec(child, out)
 		child = child.get_next()
 
-func _restore_collapsed_paths(collapsed: Dictionary) -> void:
-	if collapsed.is_empty():
-		return
-	_restore_collapsed_rec(file_tree.get_root(), collapsed)
-
-# 注意一个 Tree 的内部规则：如果当前选中项正位于某个目录内部，
-# 给那个目录赋 collapsed = true 会被**静默忽略**（赋值当场读回还是 false，
-# 不报错也不发信号）。这是引擎在拦"不能把选中项折叠没了"，UI 上也因此走不到这个状态
-# ——选中项在里面时，用户本来就点不折叠。所以这里不需要额外处理。
-func _restore_collapsed_rec(item: TreeItem, collapsed: Dictionary) -> void:
-	if item == null:
-		return
-	var child := item.get_first_child()
-	while child != null:
-		if _item_is_dir(child) and collapsed.has(_item_path(child)):
-			child.collapsed = true
-		_restore_collapsed_rec(child, collapsed)
-		child = child.get_next()
+# 把刷新前展开着的目录重新展开（顺带把它们的下一层重建出来）。
+# 走 _materialize_path(p, false)：**不**展开沿途祖先，理由见那个函数的注释。
+# 收集顺序是前序（父在子前），所以父目录总是先被处理好，子目录走下来时直接命中。
+func _restore_expanded_paths(paths: Array[String]) -> void:
+	for p in paths:
+		var item := _materialize_path(p, false)
+		if item != null and _item_is_dir(item):
+			_set_dir_collapsed(item, false)
 
 func _populate_dir(parent: TreeItem, dir_path: String, depth: int) -> void:
 	if depth >= MAX_TREE_DEPTH:
@@ -924,14 +1058,28 @@ func _populate_dir(parent: TreeItem, dir_path: String, depth: int) -> void:
 	sub_dirs.sort_custom(_name_less)
 	files.sort_custom(_name_less)
 
+	# **只建这一层。** 子目录只建出它自己那一行，里面的东西等用户点开再建
+	# （见 _ensure_dir_loaded）—— 递归就是在这里被砍掉的，不是靠某个开关关掉的。
+	# 这一段是"打开 C 盘不再卡死"的全部要点：以前这里会顺着整个盘一路建到底，
+	# 几十万个条目，界面和内存一起被拖死（README §8.7）。
 	for n in sub_dirs:
 		var sub_path := dir_path.path_join(n)
 		var dir_item := file_tree.create_item(parent)
 		dir_item.set_text(0, n)
 		dir_item.set_icon(0, _icon_dir)
 		dir_item.set_tooltip_text(0, sub_path)
-		dir_item.set_metadata(0, {"path": sub_path, "dir": true})
-		_populate_dir(dir_item, sub_path, depth + 1)
+		# 深度存在 metadata 里，不靠父链现算：MAX_TREE_DEPTH 那道守卫在 _populate_dir
+		# 开头判，而懒加载之后这个函数不再从根一路递归下来，每一层得自己知道有多深。
+		dir_item.set_metadata(0, {
+			"path": sub_path, "dir": true, "loaded": false, "depth": depth + 1,
+		})
+		# 建出来就是折上的。**这一步不能省**：collapsed 是个独立的存储位
+		# （实测 4.7.2：在空条目上设 true，之后再加子条目它依然是 true），
+		# 不设的话它默认是 false = 展开态，用户点它反而会把它收起来 —— 交互整个反了。
+		dir_item.collapsed = true
+		# 再挂个占位子条目，把展开箭头撑出来（原因见 _add_lazy_placeholder）。
+		# 顺序不能反：先设 collapsed 再挂，挂上去时才是折着的。
+		_add_lazy_placeholder(dir_item)
 
 	for n in files:
 		var file_path := dir_path.path_join(n)
@@ -939,6 +1087,108 @@ func _populate_dir(parent: TreeItem, dir_path: String, depth: int) -> void:
 		file_item.set_text(0, n)
 		file_item.set_icon(0, _icon_file if _is_editable_file(n) else _icon_unsupported)
 		file_item.set_metadata(0, {"path": file_path, "dir": false})
+
+# 把某个目录条目的**下一层**建出来。懒加载唯一往树里加东西的地方（除了整棵重建）。
+# 判据是 metadata 里的 "loaded"，**不是"有没有子条目"** —— 空目录建完也是空的，
+# 拿子条目数当判据会让它每次点开都重扫一遍磁盘，空目录尤其明显。
+# 树根不归这里管：它没有 metadata（见 _materialize_path 里那段），
+# 而它的下一层在 refresh_file_tree() 里就已经建好了，本来就是"已加载"的。
+func _ensure_dir_loaded(item: TreeItem) -> void:
+	if item == null:
+		return
+	var m = item.get_metadata(0)
+	if not (m is Dictionary) or not m["dir"]:
+		return                      # 文件条目 / 占位条目 / 树根，都不是可展开的目录
+	if m["loaded"]:
+		return
+	# 先置位再建。_populate_dir 半路出错返回时（目录读不了）也不会被反复重试 ——
+	# 它返回之后这个目录就是"展开着但是空的"，和真正的空目录表现一致。
+	m["loaded"] = true
+	item.set_metadata(0, m)
+	# 把占位子条目清掉（就是它撑着那个展开箭头）。到这一步它是唯一的子条目 ——
+	# 上面 loaded 那道早退保证了这里只可能建第一次。
+	# 目录真的空的话，清完这个条目就没有子节点了，箭头也跟着消失 —— 那是对的。
+	# TreeItem 没有 clear_children()，只有 remove_child()，而且它**不负责释放**
+	# （4.7 文档原话："This does not free the TreeItem"），得自己补一个 free()，
+	# 不然每展开一个目录就漏一个 Object。
+	for ph in item.get_children():
+		item.remove_child(ph)
+		ph.free()
+	_populate_dir(item, m["path"], m["depth"])
+
+# 展开 / 折叠一个目录条目。**我们自己**改 collapsed 的地方一律走这里。
+# 填充靠的是 _ensure_dir_loaded，而这个函数只是它的一个入口 —— 另一个入口是
+# _on_file_tree_item_collapsed（引擎点箭头那条路）。两个入口缺一不可：
+# 少后者，点箭头展开出来的是空壳；少前者，程序化那一串（新建 / 重命名 / 收藏跳转）
+# 就找不到刚建出来的子条目。
+# 走这里的四处：单击（_on_file_tree_item_selected）、双击（_on_file_tree_item_activated）、
+# 程序化定位（_materialize_path 展开祖先链）、恢复展开状态（_restore_expanded_paths）。
+#
+# **build_now = true（默认）：程序化路径**（新建 / 重命名 / 从收藏跳过来 / 恢复展开状态）。
+# 不在鼠标事件里，直接同步把下一层建出来 —— 后面几步往往马上就要在这些子条目里找东西，
+# 拖到帧末会让 _materialize_path 那一串中途断掉。
+#
+# **build_now = false：鼠标点出来的展开（单击 / 双击）。** 这一下**不能**同步建，理由见
+# _on_file_tree_item_collapsed 上面那段（引擎禁止在鼠标选择事件里建条目，硬来会崩）。
+# 这里也**不用自己排队**：赋值 collapsed 就会发 item_collapsed，那个信号会去排。
+# 明明能靠信号就别重复处理，不然每展开一次要多跑一趟 _materialize_path。
+#
+# 附带一条没写进官方文档的引擎规则（照抄自被这段取代的 _restore_collapsed_rec）：
+# 如果当前选中项正位于某个目录内部，给那个目录赋 collapsed = true 会被**静默忽略**
+# （赋值当场读回还是 false，不报错也不发信号），引擎在拦"不能把选中项折叠没了"。
+# UI 上也走不到那个状态 ——选中项在里面时用户本来就点不折叠，所以这里不需要处理。
+func _set_dir_collapsed(item: TreeItem, collapsed: bool, build_now := true) -> void:
+	# 先建再展开：反过来的话会先摊开一个空行、下一帧才补上内容
+	if not collapsed and build_now:
+		_ensure_dir_loaded(item)
+	item.collapsed = collapsed
+
+# Tree 自己把 collapsed 翻过去的时候走这里。两条路都会进来：
+#   1. 用户点了展开箭头 —— 引擎只翻 collapsed、**不发 item_selected**（实测：同一坐标
+#      点未建过的目录会得到 item_selected，点已建过的只会得到 collapsed）。懒加载下
+#      这条路是"唯一"能靠得住的那个钩子，不接，点箭头展开出来的目录就是个空壳。
+#   2. 上面 _set_dir_collapsed(build_now = false) 赋的那一下。同步那半（build_now = true）
+#      是先建完才赋值，所以走到这儿 loaded 已经是 true，自然空转一次。
+#
+# 只处理"展开"那一半：收起来不用建东西。而 _populate_dir 给每个新建的目录条目设
+# collapsed = true 也会发这个信号，那一下必须跳过 —— 不然一建树就把整棵树全展开了。
+#
+# **为什么非得拖到帧末**（这才是 build_now 存在的全部理由）：Tree 处理鼠标选择事件的
+# 过程中**禁止**建条目，硬来会是这样（实测，真点一下才暴露）：
+#     Condition "blocked > 0" is true. Returning: nullptr
+#     scene/gui/tree.cpp:5614 @ create_item()
+# 后果不止"没建出来"—— create_item 返回 null，紧跟着的 set_text 就崩在 null 上，
+# 整个游戏进程停在断点。
+# 这条坑第二招（harness）**验不出来**：那里用 select() 驱动，是程序化选中，
+# 不设那个 blocked 计数，怎么跑都是绿的。只有真的往树里发一次鼠标点击才现形。
+func _on_file_tree_item_collapsed(item: TreeItem) -> void:
+	if item.collapsed:
+		return
+	# 传**路径**而不是 TreeItem：等这一帧的工夫里树可能被整个重建过
+	# （刷新 / 换根 / 改名），攥着一个已经释放的条目去调用会报 freed object。
+	_ensure_dir_loaded_for.call_deferred(_item_path(item))
+
+# 帧末补建。由 _on_file_tree_item_collapsed 排进来 ——
+# 到这一步 Tree 的鼠标选择事件已经结束，建条目合法了。已经建过的（loaded = true）空转。
+# 目标可能已经不在树里（刷新 / 换根 / 改名），_materialize_path 返回 null，静默跳过。
+func _ensure_dir_loaded_for(path: String) -> void:
+	var item := _materialize_path(path, false)
+	if item != null:
+		_ensure_dir_loaded(item)
+
+# 给还没建过下一层的目录挂一个占位子条目。
+# **这不是装饰，是必需的。** Godot 的 Tree 按"条目有没有子节点"决定画不画展开箭头，
+# 没有子节点的条目压根不画（实测：同一坐标点未建过的目录会选中整行、点已建过的才切展开）。
+# 不挂的话，用户刚打开一个文件夹看到的是一**列没有任何三角的目录** —— 看着像坏了，
+# 而且"点小三角展开"这个习惯动作根本没有落点，只能去猜"点名字也能展开"。
+# 展开时 _ensure_dir_loaded 会把它清掉换成真内容（见那里）；目录真是空的话清完就没
+# 子节点了、箭头随之消失 —— 空目录本来就不该有箭头。
+# 它**没有 metadata**，所以 _item_path() 返回空串：右键菜单、展开状态收集这些按路径认
+# 条目的地方都会自动跳过它，不需要到处加判断。
+func _add_lazy_placeholder(item: TreeItem) -> void:
+	var ph := file_tree.create_item(item)
+	ph.set_text(0, "")
+	ph.set_selectable(0, false)        # 点不中它：一行空行被选中会像卡住了
 
 # 这个文件能不能在本编辑器里编辑。传文件名或完整路径都行（get_extension 只看最后一段）。
 # 没有扩展名的文件（README、Makefile、LICENSE……）这里也算"不可编辑"：
@@ -983,7 +1233,9 @@ func _on_file_tree_item_selected() -> void:
 		# 重命名目录 / 新建文件夹都会选中目标，用户没点它，就不该动它的展开状态。
 		if _suppress_dir_toggle:
 			return
-		item.collapsed = not item.collapsed   # 目录：展开 / 折叠
+		# 目录：展开 / 折叠。展开那一下顺带把下一层建出来（懒加载的填充点，见 _set_dir_collapsed）。
+		# build_now = false：这里正处在 Tree 的鼠标选择事件里，建条目会被引擎挡下来。
+		_set_dir_collapsed(item, not item.collapsed, false)
 		# 记账：这一轮点击已经切过这个目录了。双击的第二下靠它去重，
 		# 不然会再切一次、两次正好抵消。见 _on_file_tree_item_activated。
 		_toggled_path = _item_path(item)
@@ -1030,7 +1282,9 @@ func _on_file_tree_item_activated() -> void:
 			return
 		if _toggled_path == _item_path(item):
 			return
-		item.collapsed = not item.collapsed
+		# build_now = false，同单击那条：这也是一条鼠标事件里的路（回车进来时延后一帧
+		# 也无所谓，用户看不出来）。
+		_set_dir_collapsed(item, not item.collapsed, false)
 		return
 
 	_activate_file_path(_item_path(item))
@@ -1079,33 +1333,64 @@ func _on_open_as_text_confirmed() -> void:
 	_set_view(false)
 	open_and_show(path)
 
-# 在树里定位并选中某个文件，同时逐级展开它的祖先目录
-func _select_tree_item_for_path(path: String) -> void:
-	var item := _find_tree_item(file_tree.get_root(), path)
+# 在树里定位并选中某个条目，同时逐级展开它的祖先目录。返回选中项（找不到返回 null）。
+# 懒加载之后不能再"整棵树找一遍"了 —— 目标那一层很可能根本还没建出来，
+# 所以改成从根开始一层层把路建出来（见 _materialize_path）。
+func _select_tree_item_for_path(path: String) -> TreeItem:
+	var item := _materialize_path(path)
 	if item == null:
-		return
+		return null
 
-	var ancestor := item.get_parent()
-	while ancestor != null and ancestor != file_tree.get_root():
-		ancestor.collapsed = false
-		ancestor = ancestor.get_parent()
 	# select() 会**同步**发 item_selected。如果选中的正是一个目录，那边会把它"展开/折叠"切一下，
-	# 于是重命名成了"把目录收起来"、新建文件夹成了"建出来就是折叠的"。
+	# 于是重命名目录就成了"把它收起来"（用户刚改完名字，里面的东西当场从树里消失）。
 	# 这两句必须紧贴着 select()：中间不能有 await，也不能提前 return。
 	_suppress_dir_toggle = true
 	item.select(0)
 	_suppress_dir_toggle = false
+	return item
 
-func _find_tree_item(parent: TreeItem, path: String) -> TreeItem:
+# 从根开始，把 path 这条链一层层建出来，返回它对应的条目。
+#
+# expand_ancestors = true：沿途的祖先一并展开，"跳过去看得见"要的就是这个。
+# expand_ancestors = false：只建、不展开。恢复展开状态时用这个（见 _restore_expanded_paths）——
+# 那时手里只有"用户展开过的那些"，顺手把没收起来的父目录摊开就错了，
+# "父目录收着、里面的子目录展开着"是合法状态。
+#
+# path 不在当前根下、就是根自己、或半路上某个目录已经不存在时，返回 null。
+func _materialize_path(path: String, expand_ancestors := true) -> TreeItem:
+	var root := file_tree.get_root()
+	# path == root_dir 这条是**故意**返回 null 的，不是漏了：树根条目没有 metadata
+	# （_item_path(root) 恒为空串），一旦选中它就会走 _on_file_tree_item_selected 的
+	# 目录分支、把 root.collapsed 翻成 true，而 hide_root = true 之下整个 Explorer
+	# 会当场空掉。上面 _reveal_in_file_tree 里那段老注释说的是同一件事，两头都要挡。
+	if root == null or path == "" or path == root_dir or not _is_under(path, root_dir):
+		return null
+
+	var parts := path.substr(root_dir.length() + 1).split("/")
+	var parent := root
+	for i in parts.size():
+		# 顺序不能反：先把这一层建出来，下面才找得到它的子条目。
+		# 树根走到这里是空操作（它没有 metadata，_ensure_dir_loaded 直接返回），
+		# 而它的下一层在 refresh_file_tree 里就建好了，所以对得上。
+		_ensure_dir_loaded(parent)
+		var child := _find_child_item(parent, parts[i])
+		if child == null:
+			return null        # 半路被删掉了（改名 / 删除之后紧接着的那一次定位）
+		if expand_ancestors and i < parts.size() - 1:
+			_set_dir_collapsed(child, false)
+		parent = child
+	return parent
+
+# 在 parent 的**直接子条目**里按名字找一个。不能按完整路径找 ——
+# 懒加载下目标那一层还没建，只能一层层往下走，而每层手里只有名字。
+# 同名不可能撞车：同一个目录里不会有两条同名条目（Windows 上还是大小写不敏感的）。
+func _find_child_item(parent: TreeItem, name: String) -> TreeItem:
 	if parent == null:
 		return null
 	var child := parent.get_first_child()
 	while child != null:
-		if _item_path(child) == path:
+		if child.get_text(0) == name:
 			return child
-		var found := _find_tree_item(child, path)
-		if found != null:
-			return found
 		child = child.get_next()
 	return null
 
@@ -1288,14 +1573,82 @@ func _reveal_in_file_tree(path: String) -> void:
 		set_root_dir(path)
 		return
 
-	_select_tree_item_for_path(path)
+	var it := _select_tree_item_for_path(path)
 	# _select_tree_item_for_path 只展开**祖先链**，目标自己的 collapsed 它一个指头都不碰
 	# （_suppress_dir_toggle 正好把它压住了）。需求要的是"跳过去看得见"，
 	# 所以这里补一句展开它自己 —— 不然双击一个已折叠的收藏文件夹会"选中了但还是收着的"。
-	var it := _find_tree_item(file_tree.get_root(), path)
+	# 展开同时会把它的下一层建出来，所以这一下也是"跳过去之后里面的东西就在"。
 	if it != null and _item_is_dir(it):
-		it.collapsed = false
+		# build_now = false：这条路是收藏列表的双击进来的，也在鼠标事件里。
+		# （同形状的 set_root_dir → create_item 在下面那个分支里是同步的，一直没事 ——
+		#   说明被挡的只是"正在处理鼠标事件的那棵树"自己。不过延后一帧在这里零代价，
+		#   不值得为省它去赌引擎内部记账的粒度。）
+		_set_dir_collapsed(it, false, false)
 		file_tree.scroll_to_item(it)
+
+# ---------------- 导航（上一级 / 前进） ----------------
+
+func _setup_nav_buttons() -> void:
+	# 连 pressed 而不是按钮自己的状态：这两个是**动作**按钮，不是开关，
+	# 没有"按下态"要显示 —— 对比上面 explorer_button / stars_button 那两个 toggle。
+	go_parent_button.pressed.connect(_go_to_parent)
+	go_forward_button.pressed.connect(_go_forward)
+	_update_nav_buttons()
+
+# dir 的上一级目录；已经到顶时返回空串（按钮据此禁用）。
+func _parent_dir_of(dir: String) -> String:
+	if dir == "":
+		return ""
+	var parent := dir.get_base_dir().replace("\\", "/")
+	# 到顶了。下面这组是**实测**出来的（Godot 4.7.2 / Windows）：
+	#   "C:/Users" -> "C:/Users" 的上一级是 "C:/Users" 的父目录，正常
+	#   "C:/"      -> "C:/"      返回的是它自己
+	#   "/"        -> "/"        同样是它自己
+	#   "C:"       -> ""         退化成空串
+	#   "foo"（相对路径）-> ""      也退化成空串
+	# **这一条必须排在"父目录存在"检查之前**：实测 DirAccess.dir_exists_absolute("")
+	# 返回 true，光靠存在性检查会把空串当成一个合法目录放过去，按钮就永远不禁用了。
+	if parent == "" or parent == dir:
+		return ""
+	# 父目录得真实存在。路径在半路上被删掉时，点下去会落进"未指定目录"那棵空树。
+	if not DirAccess.dir_exists_absolute(parent):
+		return ""
+	return parent
+
+func _go_to_parent() -> void:
+	var parent := _parent_dir_of(root_dir)
+	if parent == "":
+		# 没有上一级（没开目录 / 已经到盘符根）。按钮此刻本该是禁用的，这条是兜底。
+		return
+	# 和工具栏那几个动作同一个道理：收藏视图下换根，画面上不会发生任何可见的变化，
+	# 用户只会觉得"点了没反应"（README §7.17 ⑨）。所以先切回文件树。
+	_set_view(false)
+	# 记下离开的那个目录，之后按「前进」能回到这里。
+	_nav_forward.append(root_dir)
+	# keep_forward = true：上面刚压完栈，不能让 set_root_dir 顺手把它清掉。
+	set_root_dir(parent, true)
+
+func _go_forward() -> void:
+	# 前进目标可能在离开的这段时间里被删掉了（整个目录被移走之类）。
+	# 跳过去比落进"未指定目录"那棵空树好 —— 后者看着像按钮坏了，
+	# 而且 root_dir 会指向一个死路径。
+	while not _nav_forward.is_empty():
+		var target: String = _nav_forward.pop_back()
+		if DirAccess.dir_exists_absolute(target):
+			_set_view(false)          # 同上：换根必须看得见
+			set_root_dir(target, true)
+			break
+	# 无条件补刷一次。set_root_dir 在"目标就是当前目录"时会早退，那条路上
+	# refresh_file_tree() 不会跑，按钮会停在"前进还能按"的旧状态上。
+	# 多调一次是幂等的，比去论证那条路到底可不可达便宜。
+	_update_nav_buttons()
+
+# 两个按钮的可用状态。**挂钩点只有两处**：refresh_file_tree()（换根 / 有没有目录，
+# 和 _update_new_buttons / _update_fav_dir_button 同一组）和 _go_forward() 尾部
+# （它 pop 之后可能根本没换根）。漏挂的症状是"按钮显示的和实际能做的对不上"。
+func _update_nav_buttons() -> void:
+	go_parent_button.disabled = _parent_dir_of(root_dir) == ""
+	go_forward_button.disabled = _nav_forward.is_empty()
 
 # ---------------- 视图切换（Explorer / 收藏） ----------------
 
@@ -1334,3 +1687,331 @@ func _set_view(fav: bool) -> void:
 	# 但容器会不会重排取决于 min size 有没有变，两棵树的 min size 又可能一样。
 	# 不主动排一次的话症状是"切过去只有半高，拖一下窗口才正常"。
 	file_tree.get_parent().queue_sort()
+
+# ---------------- 预览面板 ----------------
+#
+# 右栏按扩展名自动给出阅读视图：.txt → 小说排版，.md → Markdown 渲染，其余收起整栏。
+# 两条转换链都是**纯函数**（scene/Previewer/ 下的两个脚本），这里只管接线、节流和字号。
+#
+# 这里**没有**一条路径会写文件：预览的源永远是 text_edit.text（编辑器里的当前文本），
+# 不是磁盘上那个文件。所以"没保存就切走了"这类事和预览无关，预览也不需要碰磁盘。
+
+## 接线。可见 UI 已经全部在 main.tscn 里了，这里只连行为 ——
+## 和侧边栏那排按钮同一套界线（README §7.9）：长什么样归场景，做什么事归代码。
+func _setup_preview() -> void:
+	preview_mode_button.pressed.connect(_on_preview_mode_button_pressed)
+	preview_font_button.pressed.connect(_on_preview_font_button_pressed)
+	# 开关做成 toggle 态，按钮才显示得出"现在是开还是关"。
+	# toggle_mode 写在代码里而不是场景里：它改的是行为不是外观，和上面那句同一套界线。
+	preview_toggle_button.toggle_mode = true
+	preview_toggle_button.pressed.connect(_on_preview_toggle_pressed)
+
+	# 两个菜单在代码里建。PopupMenu 在场景里是**隐形**的，没有"长什么样"要落盘；
+	# 而手写 tscn 加节点得自己编 unique_id，编错或编重就是"点了菜单不出来"，不报错。
+	if _preview_mode_menu == null:
+		_preview_mode_menu = PopupMenu.new()
+		_preview_mode_menu.name = "PreviewModeMenu"
+		_preview_mode_menu.add_item("自动（按扩展名）", PreviewOverride.AUTO)
+		_preview_mode_menu.add_item("小说预览", PreviewOverride.NOVEL)
+		_preview_mode_menu.add_item("Markdown 预览", PreviewOverride.MARKDOWN)
+		_preview_mode_menu.id_pressed.connect(_on_preview_mode_id_pressed)
+		add_child(_preview_mode_menu)
+
+	if _preview_font_menu == null:
+		_preview_font_menu = PopupMenu.new()
+		_preview_font_menu.name = "PreviewFontMenu"
+		for i in PREVIEW_FONT_SIZES.size():
+			_preview_font_menu.add_item("%d px" % PREVIEW_FONT_SIZES[i], i)
+		_preview_font_menu.id_pressed.connect(_on_preview_font_id_pressed)
+		add_child(_preview_font_menu)
+
+	# 防抖 Timer。回调必须是 **IDLE**：project.godot 把物理帧设成了 1Hz
+	# （physics/common/physics_ticks_per_second，README §7.16 记着这个坑），
+	# 接物理帧的话 0.2 秒的防抖会变成 1 秒一刷，打字时预览明显跟不上。
+	_preview_timer = Timer.new()
+	_preview_timer.name = "PreviewDebounce"
+	_preview_timer.one_shot = true
+	_preview_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+	_preview_timer.wait_time = PREVIEW_DEBOUNCE_SEC
+	_preview_timer.timeout.connect(_on_preview_debounce_timeout)
+	add_child(_preview_timer)
+
+	text_edit.text_changed.connect(_on_preview_text_changed)
+
+	# meta_clicked 是 RichTextLabel 自己的信号，不在场景里连 —— 和上面三个按钮一样，
+	# 接线归代码。
+	preview_rtl.meta_clicked.connect(_on_preview_meta_clicked)
+
+	_apply_preview_font_size()
+	_update_preview_toggle_button()
+	_update_preview()
+
+
+## 纯函数：路径 → 自动模式。不碰节点、不读文件，只有这一条判断。
+static func _resolve_preview_mode(path: String) -> PreviewMode:
+	if path == "":
+		return PreviewMode.NONE
+	match path.get_extension().to_lower():
+		"txt":
+			return PreviewMode.NOVEL
+		"md":
+			return PreviewMode.MARKDOWN
+	return PreviewMode.NONE
+
+
+## 最终生效的模式。**这里的判断顺序本身就是需求保证**：
+## 先看扩展名，自动判出 NONE 就一律 NONE —— 手动覆盖在这个分支里被直接拦掉。
+##
+## 为什么不能让手动覆盖越过它：一个 .docx 被"强制按文本打开"（_on_open_as_text_confirmed）
+## 之后是一屏二进制垃圾。如果用户上一轮手动选了 Markdown，而覆盖是粘性的，
+## 这屏垃圾就会被当成 Markdown 排进阅读器里 —— 比收起右栏糟得多。
+## 所以「非 txt/md 收起整栏」是**无条件**的，覆盖只对本来就有预览的文件生效。
+func _effective_preview_mode() -> PreviewMode:
+	var auto := _resolve_preview_mode(current_file_path)
+	if auto == PreviewMode.NONE:
+		return PreviewMode.NONE
+	if _preview_mode_override == PreviewOverride.NOVEL:
+		return PreviewMode.NOVEL
+	if _preview_mode_override == PreviewOverride.MARKDOWN:
+		return PreviewMode.MARKDOWN
+	if not _preview_enabled:
+		return PreviewMode.NONE
+	return auto
+
+
+## 纯函数：模式 → 右栏标题上那个词。
+static func _mode_name(mode: PreviewMode) -> String:
+	match mode:
+		PreviewMode.NOVEL:
+			return "Preview · 小说"
+		PreviewMode.MARKDOWN:
+			return "Preview · Markdown"
+	return "Preview"
+
+
+## 右栏该不该出现。**这里区分了两种"模式是 NONE"**，它们长得一样但处理相反：
+##
+##   ① 打开了文件、但不是可预览的类型（.py / .json / 被强制按文本打开的 .docx…）
+##      → 无条件收起，把宽度还给编辑器。这是用户选的规矩。
+##   ② 根本没打开文件
+##      → **照旧空着**（和这次改动之前一模一样），听用户的开关。
+##
+## ②不能跟着①一起收，有两个具体后果：启动时右栏凭空消失，画面和以前不一样；
+## 而且工具栏那颗 Preview 按钮会变成**死键** —— 没文件时模式恒为 NONE，
+## 于是按下去了栏也开不出来，用户点两次只会觉得按钮坏了。
+func _should_show_preview_rail(mode: PreviewMode) -> bool:
+	if current_file_path == "":
+		return _preview_enabled
+	return mode != PreviewMode.NONE
+
+
+## 重新判定模式并渲染。**所有会改变"该显示什么"的地方都要调它**：
+## 打开文件、另存为、改名、删除、切模式、改字号、切开关。
+## 少调一处的症状是"内容对但右栏没跟着开/关"，属于看着像没坏的那种坏。
+func _update_preview() -> void:
+	# 摊上一轮还没跑的防抖：这次是显式刷新，权威，不需要那个迟到的回调再来一次。
+	if _preview_timer != null:
+		_preview_timer.stop()
+
+	var mode := _effective_preview_mode()
+	_set_preview_rail_visible(_should_show_preview_rail(mode))
+
+	if mode == PreviewMode.NONE:
+		# 没有可渲染的东西，**把上一次的内容清掉**：否则"打开 a.txt 再把它删了"
+		# 会在右栏留一屏已经不属于任何文件的旧文本，看起来像预览还活着。
+		preview_rtl.text = ""
+		preview_title.text = _mode_name(PreviewMode.NONE)
+		return
+
+	preview_title.text = _mode_name(mode)
+	_render_preview(mode)
+
+
+## 预览的源文本。**永远取编辑器里的当前文本**，不读磁盘 ——
+## 用户看到的就是他正在编辑的东西，没保存也不会不一致。
+func _preview_source_text() -> String:
+	return text_edit.text
+
+
+func _render_preview(mode: PreviewMode) -> void:
+	var src := _preview_source_text()
+
+	if src.length() > PREVIEW_MAX_CHARS:
+		# 超长文件给一句话，不硬排。排版本身是 O(n)，几 MB 的 .txt 每敲一键重排一次
+		# 会把主线程钉住 —— 那看起来就是程序死了。宁可明确说"太长了不预览"。
+		preview_rtl.text = "[color=%s][i]文件太长（%s 字符），预览已停用。[/i][/color]" % [
+			PREVIEW_DIM_COLOR, _thousands(src.length())]
+		return
+
+	var bb := TextToBbcode.to_bbcode(src)
+	if mode == PreviewMode.MARKDOWN:
+		# Markdown 要 base_font_size：标题字号是**相对正文**算出来的（+10/+7/+5…），
+		# 转换器不知道主题里字号被调成了多少，只能问我们。
+		bb = MarkdownToBbcode.to_bbcode(src, _preview_font_size)
+
+	# 滚动位置**存在外层 ScrollContainer 上**，不在 RichTextLabel 上：
+	# fit_content = true 让 RTL 正好和内容等高，它自己根本没得滚，滚动条是外层的。
+	# 而 rtl.text = ... 会把外层也复位 —— 不手动保的话，在长文末尾打字时视图
+	# 会一路跳回顶部，等于没法边看边改。
+	var sc := preview_rtl.get_parent() as ScrollContainer
+	var keep: int = sc.scroll_vertical if sc != null else 0
+	preview_rtl.text = bb
+	if keep > 0 and sc != null:
+		# set_deferred 而不是直接赋值：text 刚换掉时布局还没跑，ScrollContainer 的
+		# 滚动上限还是**旧的**（旧文本的高度），此刻写进去会被它按旧上限夹一次。
+		# 延到帧末，布局已经跑完，接住的就是新上限内的位置。
+		sc.set_deferred("scroll_vertical", keep)
+
+
+## 藏掉右栏 = 那个可见子节点不参与分配，剩下的重新分宽度，编辑器拿到全部剩余宽度。
+##
+## ⚠️ **必须先存 split_offsets 再藏**。SplitContainer 隐藏子节点后会按可见子节点
+## 重排偏移表 —— 实测三段的 [221, -274] 藏掉第三段之后变成 [221]，那 274 就再也
+## 找不回来了（恢复时右栏会塌成 0 或跳成一个默认值）。所以藏之前 duplicate() 存一份，
+## 显示时原样写回。这一步是**承重**的，不是保险。
+func _set_preview_rail_visible(on: bool) -> void:
+	if preview_rail.visible == on:
+		return          # 没变就别碰 offsets：否则每次刷新都会把用户的拖动结果覆盖掉
+	if on:
+		preview_rail.visible = true
+		if _preview_saved_split_offsets.size() > 0:
+			preview_split.split_offsets = _preview_saved_split_offsets
+	else:
+		_preview_saved_split_offsets = preview_split.split_offsets.duplicate()
+		preview_rail.visible = false
+	# 宽度变了要主动排一次。不排的话取决于 min size 有没有变 ——
+	# 症状是"切过去宽度不对，拖一下窗口才正常"。和 _set_view() 尾巴上那句同一个理由。
+	preview_split.queue_sort()
+
+
+## 把字号铺到 RichTextLabel 的**五个**字体项上。
+##
+## 这五个是互相独立的主题项，各有自己的默认值。只改 normal_font_size 的话，
+## 加粗标题会留在默认值而正文变了 —— 字号调大时"标题比正文还小"，字号调小时
+## 标题突兀地大。这不是防御性代码，是实测过的：只覆盖 normal 之后读
+## bold_font_size，仍然纹丝不动。README §7.20 记了这条。
+func _apply_preview_font_size() -> void:
+	for item in PREVIEW_FONT_ITEMS:
+		preview_rtl.add_theme_font_size_override(item, _preview_font_size)
+
+	# 行距按字号的倍数算，不写死像素（写死的话字号一调大，行距相对就变窄）。
+	# 比例随模式走：小说是密排长文要松，Markdown 块多留白多要收。
+	var ratio := PREVIEW_LINE_SEP_NOVEL if _effective_preview_mode() == PreviewMode.NOVEL \
+		else PREVIEW_LINE_SEP_MARKDOWN
+	preview_rtl.add_theme_constant_override(
+		"line_separation", int(round(_preview_font_size * ratio)))
+
+
+## 纯函数：1234567 → "1,234,567"。只为了让那句"文件太长"好读。
+static func _thousands(n: int) -> String:
+	var s := str(n)
+	var out := ""
+	var count := 0
+	for i in range(s.length() - 1, -1, -1):
+		out = s[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return out
+
+
+func _update_preview_toggle_button() -> void:
+	# set_pressed_**no_signal**：set_pressed() 会发 toggled（这里是 pressed），
+	# 程序化同步一下就绕回 _on_preview_toggle_pressed 再跑一遍。
+	# 和 _set_view() 里同步那两个视图按钮用的是同一条规矩。
+	preview_toggle_button.set_pressed_no_signal(_preview_enabled)
+
+
+# ---------------- 预览面板的事件 ----------------
+
+func _on_preview_toggle_pressed() -> void:
+	_preview_enabled = preview_toggle_button.button_pressed
+	_update_preview()
+
+
+## 编辑器里的文本变了。
+##
+## **闸门按"模式"而不是"可见性"关**，这一点容易写错：没打开文件时右栏是**可见的**
+## （空壳，见 _should_show_preview_rail），按可见性判的话，用户随手敲几个字就会
+## 把内容当小说排进右栏 —— 明明没有文件可预览。
+##
+## 除了这道闸门，它还是省 CPU 的关键：编辑器里完全可能开着几 MB 的 .py / .json，
+## 没这道闸门就是每敲一键排一次版，白烧 CPU 还什么都看不见。
+func _on_preview_text_changed() -> void:
+	if _effective_preview_mode() == PreviewMode.NONE:
+		return
+	_preview_timer.start()
+
+
+func _on_preview_debounce_timeout() -> void:
+	# 只重排，不重新判定开关/模式：这 200ms 里用户没可能换文件，
+	# 而 _update_preview() 会把防抖 Timer 停掉，等于自己踩自己。
+	# 但模式还是要现问一次 —— 这 200ms 里文件**确实**可能被删掉（模式就变 NONE 了）。
+	var mode := _effective_preview_mode()
+	if mode == PreviewMode.NONE:
+		return
+	_render_preview(mode)
+
+
+func _on_preview_mode_button_pressed() -> void:
+	_popup_preview_menu(_preview_mode_menu, preview_mode_button)
+
+
+func _on_preview_font_button_pressed() -> void:
+	_popup_preview_menu(_preview_font_menu, preview_font_button)
+
+
+## 弹菜单，并把"当前选中项"标出来。
+##
+## **必须显式给坐标**：Godot 4 的无参 popup() 弹在 (0,0)，不读鼠标位置 ——
+## 那是 Godot 3 的行为，别按老文档想当然（README §7.16 记着这条）。
+## rect 吃的是**视口局部坐标**，和 _open_item_menu_at 用的是同一套约定。
+func _popup_preview_menu(menu: PopupMenu, anchor: Control) -> void:
+	if menu == null:
+		return
+	_sync_preview_menu_checks(menu)
+	menu.popup(Rect2i(Vector2i(anchor.get_global_rect().position), Vector2i.ZERO))
+
+
+func _sync_preview_menu_checks(menu: PopupMenu) -> void:
+	if menu == _preview_mode_menu:
+		for i in menu.item_count:
+			menu.set_item_checked(i, menu.get_item_id(i) == _preview_mode_override)
+		return
+	for i in menu.item_count:
+		menu.set_item_checked(i, PREVIEW_FONT_SIZES[menu.get_item_id(i)] == _preview_font_size)
+
+
+func _on_preview_mode_id_pressed(id: int) -> void:
+	_preview_mode_override = id as PreviewOverride
+	# 手动选模式**顺带把右栏打开**：用户点"更改预览器"就是想看东西，
+	# 如果上一轮用 Preview 按钮把栏关了，这里不打开的话点了像没反应。
+	if _effective_preview_mode() != PreviewMode.NONE:
+		_preview_enabled = true
+		_update_preview_toggle_button()
+	# 模式变了行距比例也跟着变（见 _apply_preview_font_size），要重铺一次
+	_apply_preview_font_size()
+	_update_preview()
+
+
+func _on_preview_font_id_pressed(id: int) -> void:
+	if id < 0 or id >= PREVIEW_FONT_SIZES.size():
+		return
+	_preview_font_size = PREVIEW_FONT_SIZES[id]
+	_apply_preview_font_size()
+	# 字号还喂给了 MarkdownToBbcode 当基准（标题字号按它算），所以得整篇重排，
+	# 不是只调主题就完事。
+	_update_preview()
+
+
+## 点预览里的链接。**这里再挡一次白名单**。
+##
+## 转换器那道（MarkdownToBbcode.safe_url）已经挡过了，这里是第二道，不是冗余：
+## 预览文本将来可能从别的路径塞进来，而 OS.shell_open 是**用户内容直接驱动系统调用**
+## 的唯一一处 —— javascript: 交给默认浏览器是什么后果取决于机器上装了什么。
+## 两道防线的代价总共是一次字符串比较。
+func _on_preview_meta_clicked(meta: Variant) -> void:
+	var url := MarkdownToBbcode.safe_url(str(meta))
+	if url == "":
+		return
+	OS.shell_open(url)

@@ -13,18 +13,24 @@
 
 ## 1. 跑起来
 
-本机 PATH 上没有 `godot`，引擎在：
+本机 PATH 上没有 `godot`。引擎是 **Steam 版**（`4.7.2.stable.steam`），在：
 
 ```
-C:/Users/kldermr/Downloads/Godot_v4.7-stable_win64.exe
+C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe
 ```
+
+路径里**有空格**，而且项目路径以前在这份文档里被写错过（`txtEditor` ≠ `textEditor`），
+所以下面每段命令都自带一句 `GODOT=...`，**整段复制**就能跑，不用手抄路径：
 
 ```bash
+GODOT="/c/Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe"
+PROJ=/c/godotProject/folder-der-textEditor
+
 # 直接运行
-"/c/Users/kldermr/Downloads/Godot_v4.7-stable_win64.exe" --path /c/godotProject/folder-der-txtEditor
+"$GODOT" --path "$PROJ"
 
 # 用编辑器打开
-"/c/Users/kldermr/Downloads/Godot_v4.7-stable_win64.exe" -e --path /c/godotProject/folder-der-txtEditor
+"$GODOT" -e --path "$PROJ"
 ```
 
 导出配置已经写好，产物固定落在项目外的 `../../app/FolderDerTextEditor.exe`。
@@ -38,8 +44,8 @@ C:/Users/kldermr/Downloads/Godot_v4.7-stable_win64.exe
 ### 第一招：语法检查（秒级，先跑这个）
 
 ```bash
-"/c/Users/kldermr/Downloads/Godot_v4.7-stable_win64.exe" \
-  --headless --path /c/godotProject/folder-der-txtEditor \
+GODOT="/c/Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe"
+"$GODOT" --headless --path /c/godotProject/folder-der-textEditor \
   --check-only --script res://page/main.gd
 ```
 
@@ -103,8 +109,9 @@ func _run() -> void:
 跑法：
 
 ```bash
-timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
-  --path /c/godotProject/folder-der-txtEditor --script res://_tmp_verify.gd
+GODOT="/c/Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe"
+timeout -k 5 90 "$GODOT" \
+  --path /c/godotProject/folder-der-textEditor --script res://_tmp_verify.gd
 ```
 
 **用完务必删掉 `_tmp_verify.gd` 和 `_tmp_verify.gd.uid`**，别留在项目里。
@@ -115,12 +122,42 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
 > 现在的做法是删之前 `cp` 到 `C:/Users/kldermr/AppData/Local/Temp/fdt_harness/`。
 > 注意 harness 得放在项目根目录才跑得起来（路径必须是 `res://`），所以要重跑先从那儿拷回来。
 
+### 第三招：接活着的编辑器（可选；只验逻辑时比 harness 快一轮）
+
+`addons/godot_ai` 那套 MCP 工具在编辑器开着的时候，能直接对**运行中的游戏**求值。
+改完 `main.gd` 存盘 → 编辑器里 F5 → 就能问它问题，不用写文件也不用删文件：
+
+- 在游戏进程里跑一段 GDScript 并拿回返回值。可以直接拿到场景根
+  （`get_tree().root.get_node("Main")`）、调私有函数（`_parent_dir_of(...)`）、
+  读私有变量（`_nav_forward`）、断言 `root_dir`。
+- **按钮要用 `button.pressed.emit()` 驱动，不要直接调处理函数** —— 前者才验得到
+  "信号接上了没有"，后者只是把函数又跑了一遍。
+- 游戏窗口被切到后台时主循环不推进，会返回 `EVAL_GAME_NOT_READY`。
+  把窗口切到前台，或者 stop 再 run 一次。
+- 别拿真实盘符当夹具 —— 不是会慢了，是断言会随机器上装了什么而变（见 §7.18 ⑥）。
+
+**它替代不了第一招**（那个验的是编译）。至于"真实鼠标 / 键盘的输入路径"，
+**第二招现在能验了**（`root.push_input()` 走真正的 `gui_input`，见下面坑 4），
+所以别急着为这点开游戏、抢窗口焦点。
+
+**它省的是"只想知道这段逻辑对不对"时的来回。** 但要小心一个反过来的陷阱：
+`game_eval` 跑在游戏进程里，它的代码**不在** `main.gd` 的编译单元里，
+所以它能调私有函数、但如果被调的代码本身崩了，你看到的会是一条
+`EVAL_HUNG` / `GAME_NOT_READY`，而不是崩在哪一行 —— 这种时候回第二招更快。
+
 ### 写 harness 时踩过的坑（实测，按踩到的顺序）
 
 1. **必须带窗口跑，不要加 `--headless`。** Tree 控件在 headless 下不暴露某些崩溃——历史上那次段错误就是带窗口才复现的。
 2. **stdout 被重定向/管道时是块缓冲的**，进程被 `timeout` 杀掉就一个字都不剩。每条断言都同时 `print` **并追加写一个文件**（写完立刻 `close()`），这样即使挂起也能看到跑到哪一步了。
 3. **类型推断的报错很啰嗦**：`var r := tree.get_item_area_rect(...)` 会报 `Cannot infer the type`，得写成 `var r: Rect2 = ...`。凡是从引擎方法拿到的返回值，习惯性加上显式类型注解，能省掉一大堆来回。
 4. **合成输入可以走完整管线**：`Input.parse_input_event()` 对鼠标点击、双击（第二下带 `double_click = true`）、键盘按修饰键都有效，能端到端验真实输入路径。
+   **要验 `Tree` 的鼠标路径，用 `root.push_input(InputEventMouseButton)` 而不是 `parse_input_event()`** ——
+   `push_input` 会把事件真的送进 `Viewport` → `Control.gui_input`，也就是用户手点走的那条路。
+   这很关键：`Tree` 在处理鼠标选择事件时会**禁止建条目**（§7.19 那个 `blocked > 0`），
+   而 `item.select(0)` 是**程序化**选中，不设那个计数 —— 只用 `select()` 驱动的 harness
+   会把一个必崩的改动验成全绿。位置换算：控件是 `global_position + 局部坐标`，
+   `Tree` 的行位置用 `get_item_area_rect(item, 0).position`（视口坐标和窗口坐标 1:1，
+   本项目 stretch 是默认的 disabled）。
    **早先这里记的"弹过 PopupMenu 之后再合成输入会挂住"是错的**，2026-09 实测推翻了：菜单开着的时候照样能合成点击、断言全过（当时那次"挂住"的真凶是第 7 条的拼错属性名）。
    真实情况是**路由**问题而不是卡死：菜单（嵌入式子窗口）开着时，事件全被它吞掉，主视口一点都收不到 ——
    所以"弹着菜单去点主界面"的用例，症状是**断言全部安静地失败**（什么都没发生），不是进程停住。详见 §7.16。
@@ -232,6 +269,13 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
    晚一步就成了"先读了真存档、再改路径"，隔离是假的。
    最后再断言收尾时真实那个 `AutoSlot.tres` **逐字节没变** —— 不断言等于没隔离。
    （`cur_res` 不是 `null` 时 `save_name` 也不能是空串，`_save_favorites()` 两个都判。）
+18. **`TextEdit.text_changed` 是"用户改了文本"，程序化赋值不发。** `text_edit.text = "..."` 之后
+   等 40 帧都不会有信号 —— 我第一版就是照"改了文本总会发信号"写的，结果是防抖 Timer
+   一次都没启动，看起来像接线断了。**验防抖只有两条路**：直接调
+   `_on_preview_text_changed()`（走闸门逻辑，但绕过了信号本身）、或者
+   按第 4 条真的往输入管线里灌按键（那样才连信号一起验了）。
+   好消息是这条语义在**应用代码**里是有用的：`open_and_show()` 读文件那次
+   不会触发重排，不需要额外的抑制标志。详见 §7.20 ⑥。
 
 ---
 
@@ -241,8 +285,11 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
 
 | 路径 | 作用 |
 |---|---|
-| `page/main.tscn` | 唯一的场景。整个 UI 都在这里 |
-| `page/main.gd` | 唯一的脚本。全部逻辑 |
+| `page/main.tscn` | **主**场景。整个 UI 都在这里 |
+| `page/main.gd` | **主**脚本。界面逻辑全在这里（预览的排版算法不在这里，见下两行） |
+| `scene/Previewer/TextToBbcode.gd` | `.txt` → 阅读排版的 BBCode。**全 static 纯函数**，进 String 出 String，不碰节点也不读文件 |
+| `scene/Previewer/MarkdownToBbcode.gd` | `.md` → BBCode。同上，块级扫描 + 递归行内扫描器 |
+| `scene/Previewer/MobileNovelReader.tscn` | 右侧预览栏里那个阅读器：`VBoxContainer → ScrollContainer → RichTextLabel`。**两种预览共用它一个**（§7.20 ②） |
 | `resource/folder.tres` | 主题，只设了 `TextEdit/font_sizes/font_size = 20` |
 | `resource/new_code_highlighter.tres` | 语法高亮配色，挂在 TextEdit 的 `syntax_highlighter` 上 |
 | `asset/bg/tsBgHF.png` | 编辑区的背景图（`TextureRect`） |
@@ -269,20 +316,30 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
 
 ### 侧边栏左边那排图标按钮
 
-`VBC/SpC/HBC/VBC/` 下两个 40x40 的纯图标按钮，是**视图切换**（见 §7.17）：
+`VBC/SpC/HBC/VBC/` 下四个 40x40 的纯图标按钮。**它们是两类东西**，别混着改：
+后两个是**开关**（显示当前在哪一边），前两个是**动作**（按一下就做一件事，没有状态）。
 
-| 节点 | tooltip | 图标 | 作用 |
-|---|---|---|---|
-| `VBC/SpC/HBC/VBC/Button` | `Explorer` | `folderIcon.png` | 切回文件树 |
-| `VBC/SpC/HBC/VBC/Button2` | `Stars` | `start.png` | 切到收藏列表 |
+| 节点 | tooltip | 图标 | 种类 | 作用 |
+|---|---|---|---|---|
+| `VBC/SpC/HBC/VBC/Button` | `Explorer` | `folderIcon.png` | 开关 | 切回文件树 |
+| `VBC/SpC/HBC/VBC/Button3` | `前往上一级文件夹` | `goParentFolderIcon.png` | 动作 | 树根切到当前目录的上一级（见 §7.18） |
+| `VBC/SpC/HBC/VBC/Button4` | `前进（回到按「上一级」之前所在的文件夹）` | `goChildFolderIcon.png` | 动作 | 沿导航历史回到按「上一级」之前所在的目录 |
+| `VBC/SpC/HBC/VBC/Button2` | `Stars` | `start.png` | 开关 | 切到收藏列表 |
 
-两个都设了 `toggle_mode = true`，只用来**显示**当前在哪一边；连的是 `pressed` 信号，
+**场景里的节点名是 `Button3` / `Button4`**（当初放进去时的名字，没改），对应关系以
+`main.gd` 里那两个变量名为准：`go_parent_button` = `Button3`，`go_forward_button` = `Button4`。
+按行号顺序点一遍就是上表从上到下的顺序（`HSeparator` 夹在 `Button4` 和 `Button2` 之间）。
+
+两个**开关**都设了 `toggle_mode = true`，只用来**显示**当前在哪一边；连的是 `pressed` 信号，
 处理函数是 `_set_view.bind(false/true)` —— 显式指定目标视图，不去读按钮自己的状态
 （状态是 `_set_view` 用 `set_pressed_no_signal()` 同步过去的，读它就等于让显示反过来决定行为）。
 
+两个**动作**按钮不设 `toggle_mode`，连的是**无参**的 `pressed` → `_go_to_parent` / `_go_forward`。
+它们的可用状态由 `_update_nav_buttons()` 统一算，见 §7.18。
+
 ### 文件树头部那排按钮
 
-在 `VBC/SpC/HBC/PC/VBC2/PC/HBC/` 里（「Explorer」标题右边），作用目标**全都是 `root_dir`**（见 §6）：
+在 `VBC/SpC/HBC/VBC2/PC/HBC/` 里（「Explorer」标题右边），作用目标**全都是 `root_dir`**（见 §6）：
 
 | 节点 | 长什么样 | 作用 |
 |---|---|---|
@@ -302,7 +359,7 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
 
 | 区域 | 关键函数 | 干什么的 |
 |---|---|---|
-| **配置常量**（文件头） | `TEXT_EXTENSIONS` `SKIP_DIRS` `MAX_TREE_DEPTH` `ICON_*` | 扩展名白名单、跳过的目录、递归深度上限、图标路径 |
+| **配置常量**（文件头） | `TEXT_EXTENSIONS` `SKIP_DIRS` `MAX_TREE_DEPTH` `ICON_*` | 扩展名白名单、跳过的目录、深度上限（懒加载之后不再是建树的刹车，只剩"防止用户顺着软链接一路点下去"这一个用处）、图标路径 |
 | **启动** | `_ready()` | 建树、读命令行参数、连信号 |
 | **存/开** | `open_and_show()` `save_file()` `_on_save_as_file_selected()` | 读写文件。**所有数据风险的源头都在这一块**。三个 `FileDialog` 的 filters 在 `.tscn` 里配，见 7.15 |
 | **快捷键** | `_input()` | Ctrl+S / Ctrl+Shift+S / Ctrl+O / F11 / 缩放 / 小地图 |
@@ -313,13 +370,16 @@ timeout -k 5 90 "/c/.../Godot_v4.7-stable_win64.exe" \
 | **重命名** | `_prompt_rename()` `_validate_new_name()` `_on_rename_confirmed()` | 校验拆成了纯函数，方便不起弹窗就能测 |
 | **名字校验** | `_validate_name_in_dir()` | 空名 / 非法字符 / 撞名 / **目标目录为空**四档，**新建文件和新建文件夹、重命名共用这一套**（`_validate_new_name()` 只是委托它），省得两边各自长歪 |
 | **删除** | `_prompt_delete()` `_on_delete_confirmed()` | 走系统回收站 |
-| **文件树** | `_setup_file_tree()` `set_root_dir()` `refresh_file_tree()` `_populate_dir()` | 建树、换根、刷新、递归填充 |
-| **折叠状态** | `_collect_collapsed_paths()` `_restore_collapsed_paths()` | 刷新时保住用户的折叠状态 |
+| **文件树** | `_setup_file_tree()` `set_root_dir()` `refresh_file_tree()` `_populate_dir()` | 建树、换根、刷新、填充。**`_populate_dir()` 只填一层**（懒加载，见 §7.19） |
+| **懒加载 / 展开** | `_ensure_dir_loaded()` `_ensure_dir_loaded_for()` `_set_dir_collapsed()` `_on_file_tree_item_collapsed()` `_add_lazy_placeholder()` | 展开 = 填下一层的**唯一**时机。两个入口（单击/dblclick、点箭头）缺一不可，理由见 §7.19 |
+| **展开状态保留** | `_collect_expanded_paths()` `_restore_expanded_paths()` | 刷新时保住用户**展开过的**目录（不是折叠的，见 §7.5） |
 | **条目判定** | `_item_path()` `_item_is_dir()` `_is_editable_file()` `_is_under()` | 几个纯查询函数 |
 | **点击** | `_on_file_tree_item_selected()` `_on_file_tree_item_activated()` `_activate_file_path()` `_on_open_as_text_confirmed()` | 单击 / 双击 两条不同的路。**"打开这个文件"这个动作只有一份**，就在 `_activate_file_path()`（文件树双击和收藏列表双击都走它），因为里面那两道守卫都是防丢字的，见 §7.17 |
 | **收藏夹** | `_setup_fav_tree()` `refresh_fav_tree()` `_is_favorite()` `_toggle_favorite()` `_on_fav_item_activated()` `_reveal_in_file_tree()` `_load_favorites()` `_save_favorites()` `_normalize_path()` `_path_exists()` | 收藏树（代码建）、列表渲染、收藏 / 取消收藏、双击跳转、存档读写。见 §7.17 |
+| **导航** | `_setup_nav_buttons()` `_go_to_parent()` `_go_forward()` `_parent_dir_of()` `_update_nav_buttons()` + `_nav_forward` | 左侧那排的「上一级 / 前进」和它们的历史栈。见 §7.18 |
 | **视图切换** | `_setup_view_buttons()` `_set_view()` `_fav_view` | 在 Explorer / 收藏两块之间切，顺带换标题、藏头部三个按钮、同步两个视图图标按钮的按下态 |
-| **程序化选中** | `_select_tree_item_for_path()` + `_suppress_dir_toggle` | 在树里定位并选中一条，顺带展开祖先链。**它会让 `item_selected` 发出来**，那一下的副作用是这条链路的设计核心，见 7.14 |
+| **程序化选中** | `_select_tree_item_for_path()` `_materialize_path()` `_find_child_item()` + `_suppress_dir_toggle` | 在树里定位并选中一条，顺带展开祖先链。**它会让 `item_selected` 发出来**，那一下的副作用是这条链路的设计核心，见 7.14。懒加载下定位不能按完整路径找，得从根一层层往下走（`_materialize_path()`），见 §7.19 |
+| **预览面板**（文件末尾那一整段） | `_setup_preview()` `_resolve_preview_mode()` `_effective_preview_mode()` `_should_show_preview_rail()` `_update_preview()` `_render_preview()` `_set_preview_rail_visible()` `_apply_preview_font_size()` + 几个事件处理器 | 右侧按扩展名给阅读视图。**两个判模式的函数是分层的，别合并**：`_effective_preview_mode()` 管"渲染成什么"，`_should_show_preview_rail()` 管"栏在不在"——它们对"没打开文件"和"打开了不可预览的文件"给出**不同**答案，理由见 §7.20 ③ |
 
 ---
 
@@ -363,6 +423,20 @@ item.set_metadata(0, {"path": "/abs/path", "dir": true/false})
 否则同一个目录从对话框选进来是 `C:/a/b/`、从树里点出来是 `C:/a/b`，会被当成两条各存一份。
 
 配套的 `_fav_view: bool` 记录现在显示的是哪一边（见 §7.17 的 `_set_view()`）。
+
+### `_nav_forward: Array[String]`（前进栈）
+
+「上一级 / 前进」那颗按钮的历史。按「上一级」时把**离开的那个目录**压进来，
+按「前进」弹出去回去。它只有这一对按钮会往里写。
+
+**其他所有换根方式都会清空它** —— 清空点在 `set_root_dir()` 里，由一个 `keep_forward`
+参数控制（默认 `false` = 清）。理由：从别处跳到一个新目录，等于导航历史在那里分了个叉，
+旧的前进目标已经不该再回去了（浏览器的地址栏是同一个行为）。
+OpenDir、Ctrl+O 打开别处的文件、双击收藏里不在当前根下的目录，全走这条清空路径。
+
+> 连带一条：`set_root_dir()` 是**早退**的（目录没变就直接 return），那条路上前面那句
+> 清空不会执行 —— 这是对的，`root_dir` 没变等于什么都没发生。但反过来，
+> 任何"应该清空"的调用只要撞上早退，也就没清 —— 那同样是对的。
 
 ---
 
@@ -444,6 +518,25 @@ item.set_metadata(0, {"path": "/abs/path", "dir": true/false})
 - **切到收藏视图 / 切回 Explorer 都不会动到另一边的状态**：树的选中项、折叠状态、
   当前打开的文件、编辑器里的内容全都不受影响（harness 里来回切 5 次逐个断言过）。
 
+### 右侧预览栏
+
+打开什么文件，右栏给什么阅读视图。**模式是按扩展名自动定的**：
+
+| 打开的文件 | 右栏 | 内容 |
+|---|---|---|
+| 任何 `.txt` | 显示，标题 `Preview · 小说` | `TextToBbcode` 排的阅读版式：全角两格首行缩进、按字号比例放大的行距、整行 `* * *` 转成居中分隔线 |
+| 任何 `.md` | 显示，标题 `Preview · Markdown` | `MarkdownToBbcode` 转成 BBCode 的渲染结果 |
+| 其它（`.py` `.json` `.gd`、被强制按文本打开的 `.docx`…） | **整栏收起**，宽度还给编辑器 | 不渲染任何东西，上一次的内容被清掉 |
+
+- **栏的收/放不是把内容藏起来，是把 `SpC` 的第三个子节点 `visible = false`** —— 剩下的可见子节点重新分宽度，编辑器当场变宽 274px（外加分隔条那 12px）。实测 `split_offsets` 会跟着重排下标（`[221, -274]` → `[221]`），所以收起前存一份、显示时原样写回，那一对是承重的、不是保险，见 §7.20 ④。
+- **工具栏那颗「Preview」按钮是开关，不是"打开预览"**：按一下收起、再按一下放回来，按钮的 `button_pressed` 就是那个意图。它**只在本来就有预览的文件上有效**；开着 `.py` 时按它没有任何变化——那种文件唯一正确的状态就是收起来。
+- **「更改预览器」按钮手动指定模式**，菜单三项：自动（按扩展名）/ 小说预览 / Markdown 预览。手动选择**是粘性的**（换文件不重置，换到同类文件时立刻生效），但**越不过"非 txt/md 一律收起"这条线**：给 `.py` 手动选 Markdown 也不会把栏叫出来，理由见 §7.20 ③。
+- **「设置字号」按钮弹九档字号**（12 14 16 18 20 22 24 28 32，默认 16），当前档位带勾。改字号会同时铺满**五个**主题项并重算行距，见 §7.20 ①。
+- **打字停 200ms 后重排**（`text_changed` + 一次性 Timer）。两道闸门省 CPU：模式是 `NONE` 时**根本不起 Timer**（所以在 `.py` 里打字不会有任何排版开销），超长文件直接给「太长」提示而不是硬排。
+- **滚动位置在重排后保住**：在长文末尾打字，视图不会一路跳回顶部。
+- **没打开任何文件时右栏是空壳，但仍然是可见的、也是开得掉的** —— 这是有意的：启动时右栏凭空消失是外观回退，而且那种状态下如果按模式决定栏的去留，工具栏那颗按钮就成了死键。详见 §7.20 ③。
+- **Markdown 里的链接**：只放行 `http://` / `https://` / `mailto:`。其它（`javascript:`、`file://`、相对路径）渲染成不可点的蓝字 + 后面跟一段灰的原文，`meta_clicked` 里再挡一次同一个白名单。
+
 ### 白名单
 
 能直接编辑的扩展名在 `TEXT_EXTENSIONS`（文件头那个常量）。**没有扩展名的文件（`README`、`Makefile`、`LICENSE`）也算"不可编辑"**——判断不出类型时选了保守方向：宁可少编辑一个文本文件（改名成 `.txt` 就能编辑），也不要赌一把把二进制灌进编辑器。想编辑它们用双击。
@@ -480,9 +573,20 @@ file_item_menu.popup(Rect2i(file_tree.get_global_position() + event.position, Ve
 
 而且 `popup(rect)` 的 `rect` 吃的是**视口局部坐标**（窗口内容坐标系），不是屏幕坐标。
 
-### 7.5 `TreeItem.collapsed` 默认是 `false`（展开）
+### 7.5 `TreeItem.collapsed` 默认是 `false`（展开），而且它是个独立的存储位
 
-所以 `refresh_file_tree()` 里保留的是**被折叠的**路径集合，不是展开的。记反了的话保存逻辑会变成空操作，用户手动折叠的目录会每次刷新都弹开。
+两件事分开记：
+
+- **默认值**：`create_item()` 出来的条目 `collapsed` 是 `false`。`_populate_dir()` 建目录条目时
+  必须**显式**写 `dir_item.collapsed = true`，不写就是展开态 —— 用户点它反而会把它收起来，交互整个反。
+- **它和"有没有子节点"没关系**：实测 4.7.2，在一个**空的**条目上设 `collapsed = true`，
+  之后再加子条目，读回来**依然是 `true`**。所以"先折上、等展开时再填内容"是可行的 ——
+  懒加载整套就压在这上面（§7.19）。
+  （反过来的坑：没有子节点的条目**不画展开箭头**，见 §7.19 的占位条目。）
+
+**保留的是"展开过的"目录，不是"折叠的"** —— 刷新时走 `_collect_expanded_paths()` /
+`_restore_expanded_paths()`。懒加载之下默认态就是折叠，所以要保住的是用户点开的那些；
+记反了的话，用户展开的目录会每次刷新都塌回去。
 
 ### 7.6 Tree 会静默拒绝折叠"包含当前选中项"的目录
 
@@ -533,14 +637,23 @@ file_item_menu.popup(Rect2i(file_tree.get_global_position() + event.position, Ve
 > 双击的第二下（`double_click = true`）**不能**清这个变量，否则正好把要判断的东西抹掉。
 > 这个 bug 只在"已选中"的目录上复现，所以单看未选中的目录会以为双击是好的。
 
-### 7.12 展开箭头是 Tree 自己处理的，别插手
+### 7.12 展开箭头是 Tree 自己处理的，但**必须**接 `item_collapsed`
 
 点条目前面那个三角形，Tree **原生**就会切换折叠状态，而且它**既不发 `item_selected`
 也不发 `item_activated`**（实测两者都是 0 次）。
 
-好处是这条路完全不用我们管。代价是：**别想着在 `gui_input` 里按鼠标位置也去切一下** —— 那样
-箭头会被切两次、净效果为零。所以目录的切换只能挂在 `item_selected` / `item_activated` 上，
-不能挂在"按下的位置落在哪个条目上"这种判断上。
+**代价是：别想着在 `gui_input` 里按鼠标位置也去切一下** —— 那样箭头会被切两次、净效果为零。
+所以目录的切换只能挂信号，不能挂"按下的位置落在哪个条目上"这种判断。
+
+懒加载之前这条路确实"完全不用管"，现在不行了：展开是**唯一**的填充时机，而点箭头不发
+`item_selected` —— 不接 `item_collapsed` 的话，点箭头展开出来的目录是个**空壳**（而且不报错）。
+接口在 `_on_file_tree_item_collapsed()`，那里也记着为什么它只处理"展开"那一半。
+细节见 §7.19。
+
+> 实测补充：这个版本里 `item_selected` 发 **0** 个参数（`_on_file_tree_item_selected()` 本来
+> 就没参数），`item_collapsed` 发 **1** 个（那一个条目）。写测试连信号时参数个数写错会在
+> emit 的那一刻报 `Method expected 1 argument(s), but called with 0` —— 信号**发了**，
+> 只是回调没跑成，日志里看着像"信号没发"，很容易查错方向。
 
 ### 7.13 回车和双击在信号里长得一样，用鼠标状态区分
 
@@ -581,9 +694,12 @@ file_item_menu.popup(Rect2i(file_tree.get_global_position() + event.position, Ve
 - **重命名一个目录** → 树刷新后新条目是展开的，`select()` 那一下把它切成折叠。
   后果不是"状态没保住"那么轻：一个**有内容的**目录被重命名后，内容当场从树里消失，
   用户看起来像是"重命名把里面的文件弄没了"。
-- **新建文件夹** → 刚建出来的目录是折叠状态。空目录看不出来（没子项就没那个箭头），
-  但折叠状态会被 `_collect_collapsed_paths()` 按路径一路保住，等它里面真有东西了，
+- **新建文件夹** → 刚建出来的目录是折叠状态，而且它**有一个空占位子条目**撑着箭头
+  （§7.19），所以空目录看起来和有内容的一样、只是点开是空的。
+  它会被 `_collect_expanded_paths()` 按路径一路保住，等真有东西了，
   就是"我自己刚建的文件夹，里面的文件不见了"。
+  （懒加载之后新建目录是**折叠**的，`_suppress_dir_toggle` 要防的是反向那一下 ——
+  选中它会让它**展开**、把刚建的空目录摊开，同样不是用户要的。）
 
 修法是 `_suppress_dir_toggle` 这个开关，只在 `_select_tree_item_for_path()` 里围着那一句
 `item.select(0)` 打开（`main.gd:920` 附近）。三条要记住的：
@@ -593,9 +709,10 @@ file_item_menu.popup(Rect2i(file_tree.get_global_position() + event.position, Ve
 - **别把它漏成全局状态**：正常点击目录必须照旧能切换。harness 里专门验了两条 ——
   收尾后开关是 `false`，以及模拟一次真实单击（先 `deselect_all()` 再 `select(0)`，绕开
   `allow_reselect = false`）仍然能切换。
-- 代价是**重命名的展开状态保不住**：折叠状态是按**路径**记的（`_collect_collapsed_paths()`），
-  路径一改名就对不上，所以重命名后的目录一律是展开的。这是取舍，不是漏做 ——
-  换成"宁可收起来"就会退回上面那个"内容消失"的坑。
+- 代价是**重命名的展开状态保不住**：展开状态是按**路径**记的（`_collect_expanded_paths()`），
+  路径一改名就对不上，所以重命名后的目录回来时是**折叠**的（懒加载的默认态，见 §7.19），
+  里面原本展开的东西也一并收回去了。这是取舍，不是漏做 —— 换成"宁可展开"就会退回上面
+  那个"内容当场消失"的坑（只不过方向反过来：变成"凭空多出来一层"）。
 
 ### 7.15 三个 FileDialog 的 filters 都改成了「所有文件」—— 几个实测出来的细节
 
@@ -768,6 +885,293 @@ Windows 上**阻塞**（§7.8），harness 当场挂住。「取消收藏」必�
 **一分不剩**。再往这排加东西之前先看这组数字；标题是唯一带 `expand` 标志的那个，
 所以再怎么挤也是先牺牲它（文字被裁），三个按钮的宽度不受影响 —— 退化方向是安全的。
 
+### 7.18 导航（上一级 / 前进）—— 实测出来的边界
+
+功能：左侧 `Button3` / `Button4` 两颗按钮（§3 那张表）。「上一级」把树根换成当前目录的
+父目录，「前进」沿 `_nav_forward` 回到你按「上一级」之前待的地方。
+
+**① `_parent_dir_of()` 里那两条判断的顺序不能换，而且不能只靠"存在性"检查。**
+下面这张表是**实测**的（Godot 4.7.2 / Windows，`game_eval` 直接问引擎）：
+
+| `dir` | `dir.get_base_dir()` | `DirAccess.dir_exists_absolute()` |
+|---|---|---|
+| `C:/Users/kldermr` | `C:/Users` | `true` |
+| `C:/Users` | `C:/` | `true` |
+| `C:/` | `C:/`（**是它自己**） | `true` |
+| `C:` | `""` | **`true`** ⚠️ |
+| `/` | `/`（**是它自己**） | `false` |
+| `""` | `""` | **`true`** ⚠️ |
+
+两个反直觉的地方：
+- **`C:/` 不会退化成 `C:`** —— 它老老实实返回 `C:/`。所以"到顶"这件事在 `C:/` 上是靠
+  `parent == dir` 判出来的，不是靠空串。
+- **`dir_exists_absolute("")` 返回 `true`**。所以**不能**写成"算出父目录 → 检查它存在"，
+  空串会被放过去，按钮就永远不禁用、点一下还切到空路径。必须先判
+  `parent == "" or parent == dir`，**再**去查存在性。
+
+顺带一条没那么要紧的：`_normalize_path("C:/")` 是 `"C:"`（它会把长度 >1 的结尾斜杠去掉），
+所以 `root_dir` 最后会停在 `"C:"` 而不是 `"C:/"`。**这个不用改** —— 实测
+`DirAccess.open("C:")` 和 `open("C:/")` 在这台机器上列出来的是同一批条目（都是盘符根），
+而且 `set_root_dir()` 一直就是这么归一的，动它会波及 `_is_under()` 和 metadata 里的路径比较
+（§5 那条"两边都按规范形式比较"）。知道有这回事就行。
+
+**② `set_root_dir()` 多了个 `keep_forward` 参数，别顺手删掉。**
+它默认 `false`（清空前进栈），只有「上一级 / 前进」这两个按钮传 `true`。
+没有它的话，"前进"按一下就废：`_go_forward()` 从栈里弹出目标 → 调 `set_root_dir()` →
+被清空 → 再按第二下时栈已经空了。**"按前进只能走一步"**就是漏了这个参数的症状。
+
+**③ `_update_nav_buttons()` 的挂钩点是两处，不是一处。**
+
+| 挂钩点 | 覆盖什么 |
+|---|---|
+| `refresh_file_tree()` | 换根、有没有目录，**以及"外部换根把前进栈清了"** |
+| `_go_forward()` 尾部 | `pop` 之后可能压根没换根 —— `set_root_dir()` 撞上早退时不会调 `refresh_file_tree()` |
+
+只挂第一处的话，"前进"会在一种情况下停在错误的可用状态上；只挂第二处的话，
+OpenDir 换完根「前进」还亮着。位置和 `_update_new_buttons()` / `_update_fav_dir_button()`
+一样，在 `refresh_file_tree()` 里那个"未指定目录"的**早退之前**。
+
+**④ 收藏视图下按这两个按钮必须先 `_set_view(false)`。**
+理由和 §7.17 ⑨ 里工具栏那几个动作完全一样：换根发生在藏起来的那棵树里，画面上什么都不变，
+用户只会觉得"点了没反应"。这两颗按钮在收藏视图下**不隐藏**（藏起来的是头部那三个 ——
+它们的语义是"对着当前打开的文件夹做点什么"，没有落脚点；而导航按钮作用于 `root_dir`，
+收藏视图下照样成立）。
+
+**⑤ 「前进」的目标可能已经不存在了。**
+离开之后那个目录被删掉/移走，栈里就留了个死路径。`_go_forward()` 里用 `while` 跳过不存在的
+目标，而不是直接 `set_root_dir()` —— 后者会把 `root_dir` 指到一个死路径上，
+树变成"未指定目录"，看着像按钮坏了。
+
+**⑥ 别拿 `C:/Users/xxx` 这种大目录做测试。**
+以前这里记的是"`set_root_dir()` 会超时 10 秒"。懒加载（§7.19）之后**不慢了** ——
+实测 `set_root_dir("C:")` 是 **1 ms、根层 18 条**。这条规矩改成**测试卫生**：
+harness 要断言条目数、要逐层展开，用 §2 那种小临时目录才数得清；
+拿真实盘符当夹具，断言会随着机器上装了什么而变。
+
+### 7.19 懒加载：只建一层，展开时才填（修掉了「打开 C 盘卡死」）
+
+以前 `_populate_dir()` 是**同步递归**扫全树的（深度上限 `MAX_TREE_DEPTH = 12`），
+打开 `C:\` 会把整个盘建完 —— 几十万个条目，界面和内存一起被拖死（原 §8.7）。
+
+现在 `_populate_dir()` 到 `for n in sub_dirs:` 那里**就停了**：每个子目录只建出它自己
+那一行，里面的东西等用户点开再建。**递归就是在这儿被砍掉的**，不是靠某个开关关掉的。
+
+### 三条主线
+
+**① 目录条目记着"下一层建了没"。**
+metadata 多一个 `loaded`（还有 `depth` —— 懒加载之后 `_populate_dir()` 不再从根一路递归下来，
+每一层得自己知道有多深，`MAX_TREE_DEPTH` 那道守卫要它）。`_ensure_dir_loaded(item)` 是
+**唯一**往树里填下一层的地方。
+
+判据必须是 `loaded` 这个**位**，不能是"有没有子条目"：空目录建完也是空的，
+拿子条目数当判据会让它每次点开都重扫一遍磁盘。
+
+**② 展开有两个入口，缺一不可。**
+
+| 入口 | 什么时候走 | 行为 |
+|---|---|---|
+| `_set_dir_collapsed(item, collapsed, build_now)` | 单击 / 双击 / 程序化定位 / 恢复展开状态 | `build_now = true`（程序化）同步建；`false`（鼠标点的）**不建**，靠下面那个信号 |
+| `_on_file_tree_item_collapsed(item)` | 引擎自己翻 `collapsed` 时（**点箭头**）；以及上面赋值带出来的那一下 | 只处理"展开"那一半，帧末补建 |
+
+**③ 补建必须等一帧。** 这是 `build_now` 存在的全部理由，也是这个改动里最危险的一条：
+
+```
+Tree 处理鼠标选择事件的过程中禁止建条目，硬来会是这样（实测）：
+    Condition "blocked > 0" is true. Returning: nullptr
+    scene/gui/tree.cpp:5614 @ create_item()
+后果不止"没建出来" —— create_item 返回 null，紧跟着的 set_text 就崩在 null 上，
+整个游戏进程停在断点。
+```
+
+所以鼠标点出来的展开走 `_ensure_dir_loaded_for.call_deferred(路径)`。
+**传路径而不是 TreeItem**：等这一帧的工夫里树可能被整个重建过（刷新 / 换根 / 改名），
+攥着一个已经释放的条目去调用会报 freed object。
+
+> **坑中坑：这条 harness 默认验不出来。**
+> §2 的 harness 用 `select()` 驱动，那是**程序化**选中，不设那个 `blocked` 计数，怎么跑都是绿的。
+> 只有真的往树里发一次鼠标点击才现形。harness 里补了第 10 / 12 节，用
+> `root.push_input(InputEventMouseButton)` 走真正的 `Tree.gui_input` —— 那是 harness 唯一能
+> 碰到 `blocked` 那条路的方式，`_click_at()` 就是干这个的。§2 那段"第二招验不了它"的教训在这。
+
+### 占位子条目：不是装饰，是必需的
+
+**Tree 按"条目有没有子节点"决定画不画展开箭头**，空条目压根不画。不挂占位的话，
+用户刚打开一个文件夹看到的是一**列没有任何三角的目录** —— 看着像坏了，
+而且"点小三角展开"这个习惯动作根本没有落点。
+
+所以 `_populate_dir()` 给每个新目录挂一个占位（`_add_lazy_placeholder()`），
+`_ensure_dir_loaded()` 展开时 `remove_child()` + `free()` 掉换真内容。
+目录真是空的话清完就没子节点了、箭头随之消失 —— 空目录本来就不该有箭头。
+
+占位**没有 metadata**（`_item_path()` 返回空串），所以右键菜单、展开状态收集这些按路径认条目的
+地方都会自动跳过它，不用到处加判断。它还是 `set_selectable(false)` 的，点不中。
+
+**实测 A/B（harness 第 11 节，真鼠标点）**，同一个位置 `+2px`：
+
+| | 信号 | 选中这一行？ |
+|---|---|---|
+| 挂着占位 | `["collapsed"]` | 否 —— 引擎自己翻的 |
+| 摘掉占位 | `["collapsed", "selected"]` | **是** —— 退化成点整行 |
+
+判据是**有没有 `selected`**：有三角时引擎自己翻、不选中；没三角时只能选中整行
+（`collapsed` 两种情况下都会发，后一种是我们自己的代码翻的，别拿它当判据）。
+另外整行点击在 `+15px` 以内都算三角，`+200px` 才是选中整行。
+
+### 顺带改掉的
+
+- **刷新保留的是"展开过的"目录**（`_collect_expanded_paths()` / `_restore_expanded_paths()`），
+  和以前反过来了 —— 见 §7.5。
+- **`_find_tree_item()` 拆成了 `_materialize_path()` + `_find_child_item()`。**
+  懒加载下目标那一层还没建，不能按完整路径找；只能从根一层层往下走，每层手里只有名字。
+  所以每往下走一层先 `_ensure_dir_loaded(parent)`，**顺序不能反**。
+- **`_ensure_dir_loaded()` 里没有 `clear_children()` 这个方法。** TreeItem 只有
+  `remove_child()`，而且它**不负责释放**（4.7 文档原话："This does not free the TreeItem"），
+  得自己补 `free()`，不然每展开一个目录就漏一个 Object。
+
+### 别改回去的地方
+
+- **`_set_dir_collapsed(build_now = false)` 里不要自己再 `call_deferred` 一次。** 赋值
+  `collapsed` 就会发 `item_collapsed`，那个信号会去排；自己再排一遍就是每展开一次多跑一趟
+  `_materialize_path`（无害但白费）。
+- **`_on_file_tree_item_collapsed()` 里"只处理展开那一半"的判断不能删。** `_populate_dir()`
+  给每个新建的目录条目设 `collapsed = true` 也会发这个信号 —— 不挡的话一建树就把整棵树全展开了。
+- **占位和 `collapsed = true` 的先后不能反**：先设 `collapsed` 再挂占位，挂上去时才是折着的。
+
+### 7.20 预览面板 —— 实测出来的七条
+
+#### ① 字号要铺满**五个**主题项；而且项目里没有任何字体文件
+
+`RichTextLabel` 的字号不是一个属性，是**五个各带默认值的独立主题项**：
+
+```
+normal_font_size  bold_font_size  italics_font_size  bold_italics_font_size  mono_font_size
+```
+
+只改 `normal_font_size` 的话，**加粗标题会停在默认字号**——把正文调到 24，一级标题
+反而比正文小。`_apply_preview_font_size()` 里那个循环遍历的就是这五个。
+（`line_separation` 是主题**常量**不是字号项，走 `add_theme_constant_override`，别混。）
+行距 = `round(字号 × 比例)`，比例随模式走（小说 0.55、Markdown 0.30）。
+
+同一个坑的另一面：**这个项目里一个字体文件都没有**（`resource/folder.tres` 只有一行
+`TextEdit/font_sizes/font_size = 20`）。所以 `[code]` **换不出等宽字体** —— 代码块和正文
+用的是同一套字，只差字体大小。代码块因此只能靠**底色 + 颜色**跟正文区分
+（`CODE_BG = #1e2124`）。这是取舍不是 bug：要真等宽就得往项目里塞一个字体文件，
+那会让导出的包变大，而且正文的中文字体也得跟着挑。
+
+#### ② 两个预览共用一个 viewer 文件
+
+`scene/Previewer/` 下面只有**一个** `MobileNovelReader.tscn`
+（`VBoxContainer → ScrollContainer → RichTextLabel`），两种模式都用它。
+原本还打算给 Markdown 单独建一个 `MarkdownPreview.tscn`，写完发现两个文件的树会**逐字节相同** ——
+两种模式的差别只在于**调哪个纯函数生成字符串**。留两个就是两份要同步的状态：
+字号要应用两遍、切模式时滚动位置会在两个 RTL 之间丢。多出来的那份还会踩 §3 里
+"死的文件"的定义。
+
+**代价**：文件名带 `Novel` 却也在渲染 Markdown。将来要改名就是 `main.tscn` 里
+一行 `ext_resource path=` 的事。
+
+#### ③ 手动覆盖**越不过**"非 txt/md 一律收起"；而"没打开文件"是另一回事
+
+`_effective_preview_mode()` 的顺序本身就是需求：
+
+```gdscript
+var auto := _resolve_preview_mode(current_file_path)
+if auto == PreviewMode.NONE:
+    return PreviewMode.NONE      # ← 手动覆盖在这里被拦住
+```
+
+自动判出 `NONE` 就**一律 `NONE`**。这条是"非预览文件收起右栏"的绝对保证 ——
+被强制按文本打开的 `.docx` 不会因为用户上次手动选了 Markdown 就把一屏乱码排进阅读器。
+
+但有个相邻的路必须**分开**判：**"没打开任何文件" ≠ "打开了不可预览的文件"**。
+第一版把两者都判成"收起"，后果有两个：
+
+1. 启动时右栏凭空消失（和改动前不一样，是外观回退）；
+2. 工具栏那颗 Preview 按钮变成**死键** —— 模式恒为 `NONE`，栏既开不出来也关不掉。
+
+所以拆成两个函数，它们对这两种输入给出**不同**答案：
+
+| | `_effective_preview_mode()`（渲染成什么） | `_should_show_preview_rail()`（栏在不在） |
+|---|---|---|
+| 没打开文件 | `NONE` | **`true`**（空壳，但要看得见、开得掉） |
+| 打开了 `.py` | `NONE` | `false`（收起） |
+
+配套的还有那条防抖闸门：`_on_preview_text_changed()` 里判的是**模式**，不是
+`preview_rail.visible` —— 在"没文件、栏是空壳"那个状态下 `visible` 是 `true`，
+按可见性判的话随手敲几个字就会把内容排进一个本该空着的栏里。
+
+#### ④ 隐藏 SplitContainer 的子节点会让 `split_offsets` **重排下标**（这是设计里最大的未知点）
+
+需求要求"非预览文件把整个右栏收起来、宽度还给编辑器"。做法是
+`preview_rail.visible = false` —— `SpC` 的第三个子节点不可见，剩下的两个重新分宽度。
+
+**文档没写死**隐藏子节点之后 `split_offsets` 会怎么样，所以这是唯一可能推翻设计的地方，
+第一个测的就是它。实测结论（1920 宽的窗口，`separation = 12`）：
+
+| | `split_offsets` | 布局 |
+|---|---|---|
+| 三栏全在 | `[221, -274]` | `221 + 12 + 1401 + 12 + 274 = 1920` |
+| 右栏隐藏 | **`[221]`** | `221 + 12 + 1687 = 1920` |
+
+**下标真的重排了** —— 偏移表从两项缩成一项。所以"收起前 `duplicate()` 存一份、
+显示时原样写回"那一对**是承重的，不是保险**：不存的话重新显示时 `split_offsets`
+只剩一项，右栏宽度会变成一个凑出来的默认值。
+
+另外注意编辑器吃下的是**右栏 274 + 分隔条 12 = 286**，不是 274。按 274 断言的话
+测试会莫名其妙地红（我第一版就是这么红的）。
+
+收尾补一句 `queue_sort()`，和 `_set_view()` 同理由。万一哪天这条路走不通，
+退路是把右栏的 `custom_minimum_size.x` 设 0 再把 `split_offsets[1]` 推到 0。
+
+#### ⑤ `fit_content = true` 是承重的；滚动位置在外层 ScrollContainer 上
+
+`RichTextLabel` 上必须开着 `fit_content = true`。`ScrollContainer` 算滚动范围看的是
+子节点的 `get_combined_minimum_size()`，而 RTL 默认不按内容撑高 —— **不开的话滚动条
+怎么调都没反应**，内容会被裁掉。配套的还有 `scroll_active = false`
+（不然 RTL 自己把滚轮吃掉，外层收不到）。
+
+滚动位置因此落在**外层 `ScrollContainer`** 上（`fit_content` 让 RTL 正好和内容等高，
+RTL 自己没有可滚的余量）。而 `rtl.text = bb` 会把滚动复位，所以 `_render_preview()`
+里存 `scroll_vertical`、赋值后用 `set_deferred` 写回。不保的话，在长文末尾打字时
+视图会**一路跳回顶部**——这是这类"重排"功能最典型的坏症状。
+
+#### ⑥ `TextEdit.text_changed` **只在用户输入时发**，程序化 `.text =` 不发
+
+写 harness 时在这条上耗掉了一整轮：`text_edit.text = "..."` 之后等了 40 帧，
+防抖 Timer 一次都没启动过。`text_changed` 的语义是"**用户**改了文本"，程序化赋值
+（包括 `open_and_show()` 里读文件那次）**不发**这个信号。
+
+两个后果：
+
+- **好事**：`open_and_show()` 不需要额外的抑制标志去防"载入文件时触发一次重排"，
+  引擎已经帮我们挡了。
+- **坑**：harness 里**没法**靠给 `.text` 赋值来验防抖。要么直接调
+  `_on_preview_text_changed()` 走闸门逻辑、要么**真的往输入管线里灌按键**。
+  后者在 live 编辑器里是可行的：`Input.parse_input_event()` 灌一个 `InputEventKey`
+  进去，5 次击键 → `text_changed` 发了 5 次 —— 那样才是**真的**在验这条路。
+
+  （`game_manage` 的 `input_key` 实测**到不了** `TextEdit`，得用
+  `game_eval` 里调 `Input.parse_input_event()`。）
+
+#### ⑦ RichTextLabel 对**不存在的标签**不报错，直接当字面量画出来
+
+这条决定了该怎么验预览。两个实测结论：
+
+- **不存在的标签静默变成可见文本。** 我一度想用 `[codeblock]` 来排代码块 ——
+  **4.7 里没有这个标签**（那是 RichTextEffect / 插件生态里常见的东西，不是内置的）。
+  写进去不报错、不警告，用户看到的是一屏字面的 `[codeblock]`。
+  这一轮实际可用的标签是这些：
+  `[b] [i] [s] [u] [code] [font_size=N] [color=] [bgcolor=] [indent] [ul] [ol type=1] [url=] [center] [hr] [lb] [rb]`。
+
+- **不支持交叉嵌套，只支持严格嵌套。** `[b]a[i]b[/b]c[/i]` 这种会错乱。
+  所以 `MarkdownToBbcode` 的**递归**行内扫描器不只是为了好写：
+  递归天然产出严格嵌套的串，串 regex 替换（`**粗**` 和 `*斜*` 互相咬）产不出。
+
+因此**验证预览不能只看"没报错"**，得看 `get_parsed_text()`（拿到的是**可见文本**）——
+字面量残留、标签没闭合、编了个不存在的标签，全都在那里面现形。
+这是第一张网。第二张网是 `logs_read(source="game")`，RichTextLabel 对能识别的
+结构问题（比如闭合不配对）会推警告，跑一遍日志里必须是干净的。
+
 ---
 
 ## 8. 已知问题
@@ -811,6 +1215,34 @@ Windows 上**阻塞**（§7.8），harness 当场挂住。「取消收藏」必�
 写完整路径也只会被 Tree 从右边裁成前缀，所以选了"只看父目录名"。
 想要更多信息可以拖宽侧边栏（拖宽不会让文本变长，得改 `refresh_fav_tree()` 里的拼法）。
 
+### 8.7 打开大目录会卡住整个界面 —— **已修**（改成懒加载，见 §7.19）
+
+原来的症状：`_populate_dir()` 是**同步递归**的（深度上限 `MAX_TREE_DEPTH = 12`），
+`set_root_dir()` 会一直阻塞到整棵树建完。实测对 `C:/Users/kldermr`（用户主目录，
+里面有 `AppData`、`Documents` 这些）调一次，`game_eval` **10 秒内没有返回**，
+日志里没有任何报错 —— 是慢，不是崩。
+
+这个毛病在加「上一级」之前就有（OpenDir 到任何一个大目录都会触发），但「上一级」让它更容易撞上：
+从深层目录一路往上点，随时会经过一个巨大的目录 —— 用户报的就是"打开 C 盘、或者按上一级回到
+C 盘，编辑器卡死"。
+
+**现在**：`_populate_dir()` 只建一层，子目录展开时才填。实测同一件事：
+
+| | 实测 |
+|---|---|
+| `set_root_dir("C:")` | **1 ms**，根层 **18 条**（= `C:\` 的真实顶层条目数），整棵树真条目数 == 根层真条目数 |
+| 从 `page` 目录按「上一级」一下下点到 `C:` | 3 下，单次最慢 **13 ms**，到顶后按钮自动禁用 |
+| 到 C 盘之后树的状态 | 仍然只建了一层，没有任何目录被展开 |
+
+代价（这是设计取舍，不是漏做）：**打开一个项目文件夹不再自动展开全部，得逐层点**，
+而且"记住折叠状态"逻辑反了过来（改成记住**展开过的**目录，见 §7.5）。
+换来的是打开任何目录都是常数开销。
+
+harness 里第 8 / 12 节就钉着这两个数（`_tmp_verify.gd`，见 §2）。
+
+**下一个会撞上的类似问题在 §8.4**（大文件整篇读进 `TextEdit`）—— 同一个形状的坑，
+只是换成了文件内容而不是目录树。
+
 ---
 
 ## 9. 明确没做的（别以为是漏了）
@@ -827,6 +1259,14 @@ Windows 上**阻塞**（§7.8），harness 当场挂住。「取消收藏」必�
 - 查找 / 替换、撤销栈以外的编辑增强
 - 设置窗口（UI 建好了，按钮是隐藏的）
 - 标签页 / 多文件同时打开——**同时只有一个文件**
+- 预览相关的这几个（都是有意砍的，不是漏了）：
+  - txt 的**分章 / 目录 / 阅读进度**——小说预览只做阅读排版，不做解析
+  - Markdown 的 **setext 标题**（`===` 下划线那种）、**表格**、**HTML 块**、**脚注**、**引用式链接**（`[x][1]` + `[1]: url`）
+  - **嵌套列表**：`- a` / `  - b` 用 `[indent]` + 换字形表达层级，**不用嵌套 `[ul]`**（RichTextLabel 的列表块不能可靠嵌套）。也因此 `* * *` 这类整行分隔符在 Markdown 里必须是"整行 3 个以上同类标记"才认，否则和列表项咬
+  - **`.markdown` 扩展名不认**（只认 `.md`；要加就是 `PREVIEW_EXT_MODE` 里一个键）
+  - 字号和手动指定的预览模式**不持久化**，重启回到默认（16px / 自动）
+  - **代码块没有真正的等宽字体**：项目里一个字体文件都没有，`[code]` 换不出等宽，代码块只能靠**底色 + 颜色**和正文区分（§7.20 ①）
+  - 预览与编辑器之间**没有双向定位**（点预览里的链接能开浏览器，但不开编辑器里的对应行）
 
 ---
 
@@ -840,8 +1280,10 @@ Windows 上**阻塞**（§7.8），harness 当场挂住。「取消收藏」必�
 | `F11` | 专注模式（藏起上下两条工具栏） |
 | `Ctrl` + `=` / `-` | 字号增减（按住会连续变化），也可以 `Ctrl` + 滚轮 |
 | `Ctrl+M` | 开关 TextEdit 的小地图 |
-| 侧边栏左边第一个图标按钮 | 切回 **Explorer**（文件树）视图，tooltip `Explorer` |
-| 侧边栏左边第二个图标按钮 | 切到 **收藏** 视图，tooltip `Stars` |
+| 左侧竖排 tooltip `Explorer` | 切回 **Explorer**（文件树）视图 |
+| 左侧竖排 tooltip `前往上一级文件夹` | 树根切到当前目录的上一级。**没有上一级时禁用**（没开目录 / 已经到盘符根） |
+| 左侧竖排 tooltip `前进（…）` | 沿导航历史回到按「上一级」之前所在的目录。**没得回时禁用**。任何其他换根方式都会清空这段历史（见 §5 / §7.18） |
+| 左侧竖排 tooltip `Stars` | 切到 **收藏** 视图 |
 | 「Explorer」标题右边的星星按钮 | **收藏 / 取消收藏当前文件夹**（开关，见 §6 / §7.17 ⑬⑭）。没打开文件夹时禁用 |
 
 输入动作定义在 `project.godot` 的 `[input]` 段：`ui_save` `f11` `zoom_up` `zoom_down` `map`。
